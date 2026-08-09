@@ -1,10 +1,10 @@
 {
   "name": "persona-paths",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun build src/backend.ts --outfile dist/backend.js --target bun && bun build src/frontend.ts --outfile dist/frontend.js --target browser"
+    "build": "bun build backend.ts --outfile backend.js --target bun && bun build frontend.ts --outfile frontend.js --target browser"
   },
   "devDependencies": {
     "lumiverse-spindle-types": "latest"

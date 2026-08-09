@@ -1,86 +1,57 @@
 # Persona Paths
 
-**Version 0.1.1**
+Version 0.1.2
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
-## What makes it different
+## Important repository layout
 
-- **Hard context isolation:** Persona Paths reads the role-play, but its generated choices and private relationship notes are never appended to the chat and never inserted into normal prompt assembly.
-- **Persona fidelity:** It uses the active persona card plus recent examples of how you actually play the persona.
-- **Relationship-conditioned behavior:** It explicitly avoids averaging contradictory traits. A brash character can be gentle with one person and abrasive with everyone else.
-- **Action-first choices:** Options must contain meaningful action or decisions, not four alternate quips.
-- **Player authorship:** Choices control only the player's persona. The CYOA model is told not to invent NPC reactions, world outcomes, discoveries, or consequences.
-- **Useful-sized turns:** Compact, Normal, and Detailed modes produce paste-ready user turns instead of tiny seeds that force the story model to invent the whole branch.
-- **Configurable style:** Auto/First/Second/Third person and Auto/Present/Past tense.
-- **Separate model:** Pick any Lumiverse LLM connection profile, plus an optional exact model override.
-- **Private relationship memory:** Optional short behavior/relationship notes are stored only in the extension's scoped storage.
-- **Swipe-aware:** If the assistant reply changes via swipe, Persona Paths regenerates choices for the new content.
-- **Click to edit:** Clicking a choice fills the normal Lumiverse composer but never auto-sends it.
+This repository intentionally keeps its compiled entry files at the repository root:
+
+- `backend.js`
+- `frontend.js`
+
+`spindle.json` points directly to those files. This makes GitHub web uploads resilient even when folders are flattened.
+
+The editable TypeScript sources are also kept at root (`backend.ts`, `frontend.ts`). `bun run build` recompiles them in place.
+
+## Features
+
+- Hard context isolation: generated choices and private relationship notes are never appended to the RP chat or inserted into normal prompt assembly.
+- Persona fidelity using the active persona plus recent examples of how the player actually portrays them.
+- Relationship-conditioned behavior instead of averaging contradictory traits into generic behavior.
+- Action-first, detailed choices rather than four alternate quips.
+- Choices control only the player's persona; NPC reactions, discoveries, consequences, and world state remain with the story model.
+- Configurable Auto/First/Second/Third person and Auto/Present/Past tense.
+- Configurable Compact/Normal/Detailed choice length and 3–6 choices.
+- Separate Lumiverse LLM connection and optional model override.
+- Private relationship memory.
+- Swipe-aware choice regeneration.
+- Click-to-fill composer without auto-send.
 
 ## Opening Persona Paths
 
-Persona Paths deliberately exposes three access paths so it is not dependent on a single Lumiverse navigation surface:
+When the frontend loads successfully, Persona Paths exposes:
 
-- Click the floating **Paths** launcher near the lower-right of the chat.
-- Open the **Paths** drawer tab in Lumiverse's sidebar.
-- Open the chat-input **Extras** menu and choose **Open Persona Paths**.
+- a `Paths` drawer tab,
+- `Open Persona Paths` in the chat input Extras menu,
+- a floating `Paths` launcher.
 
-The settings panel shows its version directly under the Persona Paths heading so stale frontend bundles are easy to spot.
+The panel displays its installed extension version.
 
 ## Permissions
 
-Persona Paths deliberately requests only:
+Persona Paths requests only:
 
-- `generation` — to make the private CYOA model call and list connection profiles
-- `personas` — to read the active persona
-- `chat_mutation` — to read the role-play transcript
+- `generation`
+- `personas`
+- `chat_mutation`
 
-It does **not** request interceptor/context-handler permissions and does not write CYOA material into chat messages.
+It does not request interceptor or context-handler permissions.
 
-## Install from a GitHub repo
-
-Lumiverse installs Spindle extensions from GitHub. Put this folder in a GitHub repository, replace the placeholder `github` and `homepage` URLs in `spindle.json`, commit the included `dist/` files, then install the repository URL in Lumiverse's Extensions panel.
-
-The `dist/` files are prebuilt. For development, Lumiverse can also auto-build from `src/`, or you can run:
+## Build
 
 ```bash
 bun install
 bun run build
 ```
-
-## Suggested defaults
-
-- Choices: 4
-- Detail: Normal
-- POV: Auto
-- Tense: Auto
-- Scene messages: 12
-- User portrayal examples: 6
-- Temperature: 0.85
-- Private relationship memory: On
-- Reasoning: Off
-
-## Design boundary
-
-Data flow is intentionally one-way:
-
-```text
-Role-play transcript + active persona
-              |
-              v
-      Persona Paths model
-              |
-      private extension state
-              |
-              v
-        choice UI cards
-              |
-     click -> Lumiverse composer
-              |
-       human edits/sends
-              v
-       normal RP pipeline
-```
-
-There is no automatic CYOA-to-story-context path.
