@@ -1,12 +1,17 @@
 {
-  "version": "0.1.2",
+  "version": "0.1.3",
   "name": "Persona Paths",
   "identifier": "persona_paths",
   "author": "Eric Tooker",
   "github": "https://github.com/fidgetycarrot/Persona-Paths",
   "homepage": "https://github.com/fidgetycarrot/Persona-Paths",
   "description": "Private, persona-aware next-move choices for role-play. Generates isolated CYOA options after character replies without leaking them into story context.",
-  "permissions": ["generation", "personas", "chat_mutation"],
+  "permissions": [
+    "generation",
+    "personas",
+    "chat_mutation",
+    "ui_panels"
+  ],
   "entry_backend": "backend.js",
   "entry_frontend": "frontend.js",
   "minimum_lumiverse_version": "0.1.0"

@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.2';
+const EXT_VERSION = '0.1.3';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -125,14 +125,15 @@ export function setup(ctx) {
     .pp-persona-badge { font-size:11px; color:var(--lumiverse-text-muted); padding:7px 9px; background:var(--lumiverse-fill-subtle); border-radius:9px; }
     .pp-divider { height:1px; background:var(--lumiverse-border); opacity:.7; }
     .pp-launcher {
-      position:fixed; right:16px; bottom:92px; z-index:90; display:flex; align-items:center; gap:7px;
-      border:1px solid var(--lumiverse-border); border-radius:999px; padding:9px 12px; cursor:pointer;
+      width:100%; height:100%; display:flex; align-items:center; justify-content:center; gap:7px; box-sizing:border-box;
+      border:1px solid var(--lumiverse-border); border-radius:999px; padding:0 11px; cursor:pointer;
       background:color-mix(in srgb, var(--lumiverse-fill) 92%, transparent); color:var(--lumiverse-text);
       box-shadow:0 7px 24px rgba(0,0,0,.24); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
       font:inherit; font-size:12px; font-weight:750; letter-spacing:.01em;
     }
-    .pp-launcher:hover { background:var(--lumiverse-fill-subtle); transform:translateY(-1px); }
-    .pp-launcher svg { width:16px; height:16px; color:var(--lumiverse-accent, currentColor); }
+    .pp-launcher:hover { background:var(--lumiverse-fill-subtle); }
+    .pp-launcher svg { width:16px; height:16px; color:var(--lumiverse-accent, currentColor); flex:0 0 auto; }
+    .pp-native-select-slot { width:100%; min-width:0; }
     .pp-version { font-size:10px; color:var(--lumiverse-text-muted); opacity:.7; margin-top:-8px; }
     @media (max-width: 620px) { .pp-grid { grid-template-columns:1fr; } .pp-choice-text { font-size:12px; } }
   `);
@@ -260,27 +261,31 @@ export function setup(ctx) {
         keywords: ['cyoa', 'choices', 'roleplay', 'persona', 'paths'],
         iconSvg: PATHS_ICON,
     });
-    // Explicit launcher: do not rely on users discovering the drawer tab.
-    // This mirrors the hardened access pattern that proved reliable in LumiDraw.
-    let launcher = document.querySelector('[data-persona-paths-launcher]');
-    let ownsLauncher = false;
-    if (!launcher) {
-        try {
-            launcher = ctx.dom.createElement('button', { type: 'button', class: 'pp-launcher' });
-        }
-        catch {
-            launcher = document.createElement('button');
-            launcher.type = 'button';
-            launcher.className = 'pp-launcher';
-        }
-        launcher.setAttribute('data-persona-paths-launcher', 'true');
+    document.querySelectorAll('[data-persona-paths-launcher]').forEach((el) => el.remove());
+    // Native Lumiverse float widget: draggable, edge-snapping, and managed by the host UI.
+    let floatLauncher = null;
+    try {
+        floatLauncher = ctx.ui.createFloatWidget({
+            width: 86,
+            height: 38,
+            initialPosition: {
+                x: 16,
+                y: Math.max(12, window.innerHeight - 142),
+            },
+            snapToEdge: true,
+            tooltip: `Open Persona Paths v${EXT_VERSION}`,
+            chromeless: true,
+        });
+        const launcher = ctx.dom.createElement('button', { type: 'button', class: 'pp-launcher' });
         launcher.title = `Open Persona Paths v${EXT_VERSION}`;
         launcher.setAttribute('aria-label', 'Open Persona Paths');
         launcher.innerHTML = `${PATHS_ICON}<span>Paths</span>`;
-        document.body.appendChild(launcher);
-        ownsLauncher = true;
+        launcher.addEventListener('click', () => tab.activate());
+        floatLauncher.root.appendChild(launcher);
     }
-    launcher.addEventListener('click', () => tab.activate());
+    catch (err) {
+        console.warn('[Persona Paths] Native floating launcher unavailable', err);
+    }
     // Also expose a native chat-input Extras action as a second access path.
     let openAction = null;
     let unsubOpenAction = () => { };
@@ -308,9 +313,20 @@ export function setup(ctx) {
     enabledLabel.append(enabled, document.createTextNode('Generate choices after character replies'));
     enabled.addEventListener('change', () => scheduleSave({ enabled: enabled.checked }, 0));
     settings.appendChild(enabledLabel);
-    const connection = ctx.dom.createElement('select');
-    connection.addEventListener('change', () => scheduleSave({ connectionId: connection.value }, 0));
-    settings.appendChild(createLabeledField(ctx, 'LLM connection', connection, 'Uses a separate Lumiverse connection profile from your story model if you want.'));
+    const connectionSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' });
+    settings.appendChild(createLabeledField(ctx, 'LLM connection', connectionSlot, 'Uses a separate Lumiverse connection profile from your story model if you want.'));
+    const connectionPicker = ctx.components.mountSelect(connectionSlot, {
+        value: '',
+        options: [],
+        placeholder: 'Choose a connection…',
+        searchPlaceholder: 'Search connections…',
+        noResultsMessage: 'No matching connections.',
+        emptyMessage: 'No Lumiverse LLM connections are available.',
+        portal: true,
+        maxHeight: 360,
+        minWidth: 300,
+        onChange: (connectionId) => scheduleSave({ connectionId }, 0),
+    });
     const modelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'Leave blank to use connection model' });
     modelOverride.addEventListener('input', () => scheduleSave({ modelOverride: modelOverride.value }));
     settings.appendChild(createLabeledField(ctx, 'Model override', modelOverride, 'Optional exact model ID. Blank follows the selected connection profile.'));
@@ -405,21 +421,18 @@ export function setup(ctx) {
         globalInstructions.value = cfg.globalInstructions || '';
         temperature.value = String(cfg.temperature ?? 0.85);
         maxTokens.value = String(cfg.maxTokens ?? 1400);
-        connection.innerHTML = '';
         const conns = Array.isArray(state?.connections) ? state.connections : [];
-        conns.forEach((c) => {
-            const o = document.createElement('option');
-            o.value = c.id;
-            o.textContent = `${c.name} — ${c.model}`;
-            connection.appendChild(o);
+        const selectedConnection = cfg.connectionId && conns.some((c) => c.id === cfg.connectionId)
+            ? cfg.connectionId
+            : (conns.find((c) => c.is_default) || conns[0])?.id || '';
+        connectionPicker.update({
+            value: selectedConnection,
+            options: conns.map((c) => ({
+                value: String(c.id),
+                label: String(c.name || 'Unnamed connection'),
+                sublabel: String(c.model || c.provider || ''),
+            })),
         });
-        if (cfg.connectionId && conns.some((c) => c.id === cfg.connectionId))
-            connection.value = cfg.connectionId;
-        else {
-            const def = conns.find((c) => c.is_default) || conns[0];
-            if (def)
-                connection.value = def.id;
-        }
         const persona = state?.activePersona;
         personaBadge.textContent = persona ? `Active persona: ${persona.name}${persona.title ? ` — ${persona.title}` : ''}` : 'Active persona: none';
         personaInstructions.disabled = !persona;
@@ -496,8 +509,14 @@ export function setup(ctx) {
             openAction?.destroy?.();
         }
         catch { }
-        if (ownsLauncher)
-            launcher?.remove();
+        try {
+            connectionPicker?.destroy?.();
+        }
+        catch { }
+        try {
+            floatLauncher?.destroy?.();
+        }
+        catch { }
         removeStyle();
         tab.destroy();
         ctx.dom.cleanup();
