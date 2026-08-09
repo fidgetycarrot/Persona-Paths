@@ -1,6 +1,6 @@
 type Ctx = any
 
-const EXT_VERSION = '0.1.5'
+const EXT_VERSION = '0.1.6'
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`
 
 type Choice = { intent: string; title: string; text: string }
@@ -509,6 +509,8 @@ export function setup(ctx: Ctx) {
   })
 
   let unsubRendered = () => {}
+  let unsubGenerationEnded = () => {}
+  let unsubSwipe = () => {}
   let unsubChatSwitch = () => {}
   try {
     unsubRendered = ctx.events.on('CHARACTER_MESSAGE_RENDERED', (payload: any) => {
@@ -518,6 +520,35 @@ export function setup(ctx: Ctx) {
       else ctx.sendToBackend({ type: 'load_choices', messageId: id })
     })
   } catch (err) { console.warn('[Persona Paths] CHARACTER_MESSAGE_RENDERED subscription failed', err) }
+
+  // Generate only after Lumiverse reports that the normal story generation has
+  // finished and saved its assistant message. Triggering from the frontend is
+  // intentional: onFrontendMessage carries the concrete userId required by
+  // operator-scoped extensions, while backend lifecycle events may not.
+  try {
+    unsubGenerationEnded = ctx.events.on('GENERATION_ENDED', (payload: any) => {
+      if (payload?.error) return
+      const chatId = String(payload?.chatId || '')
+      const messageId = String(payload?.messageId || '')
+      if (!chatId || !messageId) return
+      ctx.sendToBackend({ type: 'ensure_choices', chatId, messageId })
+    })
+  } catch (err) { console.warn('[Persona Paths] GENERATION_ENDED subscription failed', err) }
+
+  // Swipes are also routed through the frontend so regeneration/navigation keeps
+  // the same explicit user scope. The backend content-hash cache dedupes repeats.
+  try {
+    unsubSwipe = ctx.events.on('MESSAGE_SWIPED', (payload: any) => {
+      if (!payload?.chatId || !payload?.message?.id || payload?.message?.role !== 'assistant') return
+      if (payload.action === 'navigated' || payload.action === 'updated' || payload.action === 'added') {
+        ctx.sendToBackend({
+          type: 'ensure_choices',
+          chatId: String(payload.chatId),
+          messageId: String(payload.message.id),
+        })
+      }
+    })
+  } catch (err) { console.warn('[Persona Paths] MESSAGE_SWIPED subscription failed', err) }
 
   try {
     unsubChatSwitch = ctx.events.on('CHAT_SWITCHED', () => {
@@ -543,6 +574,8 @@ export function setup(ctx: Ctx) {
     if (saveTimer) clearTimeout(saveTimer)
     unsubBackend()
     unsubRendered()
+    unsubGenerationEnded()
+    unsubSwipe()
     unsubChatSwitch()
     try { unsubOpenAction() } catch {}
     try { openAction?.destroy?.() } catch {}

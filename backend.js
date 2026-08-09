@@ -439,6 +439,15 @@ spindle.onFrontendMessage(async (payload, userId) => {
             }
             return;
         }
+        if (payload.type === 'ensure_choices') {
+            const chatId = String(payload.chatId || '');
+            const messageId = String(payload.messageId || '');
+            if (!userId)
+                throw new Error('Persona Paths could not resolve the current Lumiverse user for CYOA generation.');
+            if (chatId && messageId)
+                await handleAssistantMessage(chatId, messageId, false, userId);
+            return;
+        }
         if (payload.type === 'regenerate') {
             const chatId = String(payload.chatId || '');
             const messageId = String(payload.messageId || '');
@@ -458,18 +467,9 @@ spindle.onFrontendMessage(async (payload, userId) => {
         spindle.sendToFrontend({ type: 'request_error', error: err?.message || String(err) }, userId);
     }
 });
-spindle.on('CHARACTER_MESSAGE_RENDERED', (payload, userId) => {
-    if (!payload?.chatId || !payload?.messageId)
-        return;
-    void handleAssistantMessage(String(payload.chatId), String(payload.messageId), false, userId);
-});
-spindle.on('MESSAGE_SWIPED', (payload, userId) => {
-    if (!payload?.chatId || !payload?.message?.id || payload.message?.role !== 'assistant')
-        return;
-    if (payload.action === 'navigated' || payload.action === 'updated' || payload.action === 'added') {
-        void handleAssistantMessage(String(payload.chatId), String(payload.message.id), false, userId);
-    }
-});
+// CYOA generation triggers are intentionally received from the frontend via
+// onFrontendMessage so operator-scoped installs always carry the active userId.
+// The frontend listens to GENERATION_ENDED and MESSAGE_SWIPED.
 spindle.permissions.onChanged(({ permission }) => {
     // Permission-change callbacks do not carry a userId. For an operator-scoped
     // extension, do not call user-scoped APIs from here. The panel's Refresh

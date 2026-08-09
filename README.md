@@ -1,6 +1,6 @@
 # Persona Paths
 
-Version 0.1.5
+Version 0.1.6
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -69,3 +69,8 @@ bun run build
 - Stops calling user-scoped APIs from permission-change callbacks, because those callbacks do not carry a user ID.
 - Isolates persona lookup errors from connection lookup errors so the panel still renders useful diagnostics.
 - Keeps the Refresh connections button from v0.1.4.
+
+
+## v0.1.6 trigger fix
+
+CYOA generation is now triggered by the browser-side `GENERATION_ENDED` event and forwarded to the backend. This preserves the active user's scope for operator-installed extensions. Swipe changes follow the same path.
