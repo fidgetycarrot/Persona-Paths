@@ -36,7 +36,7 @@ function normalizeConfig(input) {
     next.contextMessages = Math.round(clampNumber(next.contextMessages, 6, 30, DEFAULT_CONFIG.contextMessages));
     next.recentUserExamples = Math.round(clampNumber(next.recentUserExamples, 2, 12, DEFAULT_CONFIG.recentUserExamples));
     next.temperature = clampNumber(next.temperature, 0, 2, DEFAULT_CONFIG.temperature);
-    next.maxTokens = Math.round(clampNumber(next.maxTokens, 500, 3000, DEFAULT_CONFIG.maxTokens));
+    next.maxTokens = Math.round(clampNumber(next.maxTokens, 500, 32000, DEFAULT_CONFIG.maxTokens));
     next.generationDelaySeconds = clampNumber(next.generationDelaySeconds, 0, 15, DEFAULT_CONFIG.generationDelaySeconds);
     if (!['auto', 'first', 'second', 'third'].includes(next.pov))
         next.pov = 'auto';
@@ -240,6 +240,65 @@ async function resolveConnection(cfg, userId) {
         conn = connections.find((c) => c.is_default) || connections[0];
     return { conn, connections };
 }
+function getKimiTraits(provider, model) {
+    const p = String(provider || '').toLowerCase();
+    const m = String(model || '').toLowerCase();
+    const isKimi = p.includes('moonshot') || m.startsWith('kimi-');
+    const isK3 = isKimi && m.includes('kimi-k3');
+    const isK27 = isKimi && m.includes('kimi-k2.7-code');
+    const isK26 = isKimi && m.includes('kimi-k2.6');
+    const isK25 = isKimi && m.includes('kimi-k2.5');
+    return { isKimi, isK3, isK27, isK26, isK25, alwaysThinking: isK3 || isK27 };
+}
+function buildGenerationTuning(conn, model, cfg, repair = false) {
+    const traits = getKimiTraits(conn?.provider, model);
+    const params = {};
+    let reasoning = undefined;
+    let effectiveMaxTokens = cfg.maxTokens;
+    if (traits.isKimi) {
+        // Moonshot's current Kimi families use fixed temperatures. Do not send the
+        // generic extension temperature because Kimi rejects non-fixed values.
+        // Thinking tokens share the same output budget as final content.
+        if (!cfg.useReasoning) {
+            if (traits.isK3) {
+                // K3 cannot disable thinking. "Reasoning off" in Persona Paths therefore
+                // means low-effort reasoning. Set the provider-native field explicitly;
+                // raw parameter values take precedence over Lumiverse's translated value.
+                params.reasoning_effort = 'low';
+                reasoning = { source: 'custom', apiReasoning: true, effort: 'low' };
+                effectiveMaxTokens = Math.max(effectiveMaxTokens, 16000);
+            }
+            else if (traits.isK27) {
+                // K2.7 Code also always thinks and has no effort switch.
+                reasoning = { source: 'custom', apiReasoning: true, effort: 'low' };
+                effectiveMaxTokens = Math.max(effectiveMaxTokens, 16000);
+            }
+            else {
+                // K2.6 / K2.5 support a real thinking-off switch.
+                reasoning = { source: 'off' };
+            }
+        }
+        else {
+            // If thinking is requested, Kimi needs substantially more room because
+            // reasoning_content and content consume the same max-token budget.
+            reasoning = { source: 'inherit' };
+            effectiveMaxTokens = Math.max(effectiveMaxTokens, 16000);
+        }
+    }
+    else {
+        params.temperature = cfg.temperature;
+        if (!cfg.useReasoning)
+            reasoning = { source: 'off' };
+    }
+    if (repair && effectiveMaxTokens > 0) {
+        // A length-truncated repair should get more headroom rather than repeating
+        // the exact same doomed budget. 32k is within the documented K2.5/K2.6
+        // defaults and is modest for K3.
+        effectiveMaxTokens = Math.min(Math.max(effectiveMaxTokens * 2, traits.isKimi ? 32000 : effectiveMaxTokens), 64000);
+    }
+    params.max_tokens = effectiveMaxTokens;
+    return { params, reasoning, effectiveMaxTokens, traits };
+}
 async function generatePaths(args, userId) {
     const { conn } = await resolveConnection(config, userId);
     const system = buildSystemPrompt(config);
@@ -247,9 +306,11 @@ async function generatePaths(args, userId) {
         ...args,
         globalInstructions: config.globalInstructions,
     });
+    const model = config.modelOverride.trim() || conn.model;
+    const tuning = buildGenerationTuning(conn, model, config, false);
     const request = {
         provider: conn.provider,
-        model: config.modelOverride.trim() || conn.model,
+        model,
         connection_id: conn.id,
         // Raw generation is also user-scoped for operator-installed extensions.
         // The host reads userId directly from the generation input payload.
@@ -258,13 +319,13 @@ async function generatePaths(args, userId) {
             { role: 'system', content: system },
             { role: 'user', content: user },
         ],
-        parameters: {
-            temperature: config.temperature,
-            max_tokens: config.maxTokens,
-        },
+        parameters: tuning.params,
     };
-    if (!config.useReasoning)
-        request.reasoning = { source: 'off' };
+    if (tuning.reasoning)
+        request.reasoning = tuning.reasoning;
+    if (tuning.traits.isKimi) {
+        spindle.log.info(`Persona Paths Kimi tuning: model=${model}, max_tokens=${tuning.effectiveMaxTokens}, reasoning=${config.useReasoning ? 'connection' : (tuning.traits.alwaysThinking ? 'low/always-on' : 'off')}`);
+    }
     let response = await spindle.generate.raw(request);
     let responseText = String(response?.content || '').trim();
     let parsed;
@@ -296,17 +357,23 @@ PREVIOUS OUTPUT (reference only; it may be empty, malformed, or truncated):
 ${priorForRepair}
 
 Generate the answer again from scratch. Return one corrected JSON object only. Preserve strong persona fidelity, concrete action, distinct trajectories, the selected POV/tense, and the authorship boundary. Do not mention this repair pass.`;
+        const repairTuning = buildGenerationTuning(conn, model, config, response?.finish_reason === 'length');
         const repairRequest = {
             ...request,
+            parameters: repairTuning.params,
             messages: [
                 { role: 'system', content: system },
                 { role: 'user', content: repairUser },
             ],
         };
+        if (repairTuning.reasoning)
+            repairRequest.reasoning = repairTuning.reasoning;
+        else
+            delete repairRequest.reasoning;
         response = await spindle.generate.raw(repairRequest);
         responseText = String(response?.content || '').trim();
         if (!responseText) {
-            throw new Error(`CYOA provider returned empty content twice${response?.finish_reason ? ` (finish reason: ${response.finish_reason})` : ''}. Try increasing Max output tokens or using another model if this persists.`);
+            throw new Error(`CYOA provider returned empty content twice${response?.finish_reason ? ` (finish reason: ${response.finish_reason})` : ''}. Persona Paths already expanded the retry budget; if this is an always-thinking model, try another model or enable a larger manual Max output token budget.`);
         }
         try {
             parsed = parseJsonObject(responseText);

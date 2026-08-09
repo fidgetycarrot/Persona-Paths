@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.8';
+const EXT_VERSION = '0.1.9';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -469,6 +469,9 @@ export function setup(ctx) {
     reasoningLabel.append(reasoningToggle, document.createTextNode('Use connection reasoning / thinking'));
     reasoningToggle.addEventListener('change', () => scheduleSave({ useReasoning: reasoningToggle.checked }, 0));
     settings.appendChild(reasoningLabel);
+    const reasoningHint = ctx.dom.createElement('div', { class: 'pp-hint' });
+    reasoningHint.textContent = 'Kimi K3 and K2.7 always think. When this is off, Persona Paths automatically uses low effort on K3 and gives always-thinking Kimi models extra output headroom.';
+    settings.appendChild(reasoningHint);
     const divider = ctx.dom.createElement('div', { class: 'pp-divider' });
     settings.appendChild(divider);
     const personaBadge = ctx.dom.createElement('div', { class: 'pp-persona-badge' });
@@ -490,9 +493,9 @@ export function setup(ctx) {
     const advancedGrid = ctx.dom.createElement('div', { class: 'pp-grid' });
     const temperature = ctx.dom.createElement('input', { type: 'number', min: '0', max: '2', step: '0.05' });
     temperature.addEventListener('change', () => scheduleSave({ temperature: Number(temperature.value) }, 0));
-    const maxTokens = ctx.dom.createElement('input', { type: 'number', min: '500', max: '3000', step: '100' });
+    const maxTokens = ctx.dom.createElement('input', { type: 'number', min: '500', max: '32000', step: '100' });
     maxTokens.addEventListener('change', () => scheduleSave({ maxTokens: Number(maxTokens.value) }, 0));
-    advancedGrid.append(createLabeledField(ctx, 'Temperature', temperature), createLabeledField(ctx, 'Max output tokens', maxTokens));
+    advancedGrid.append(createLabeledField(ctx, 'Temperature', temperature), createLabeledField(ctx, 'Max output tokens', maxTokens, 'Base budget. Always-thinking Kimi models are automatically raised to at least 16k so reasoning cannot consume the entire reply.'));
     settings.appendChild(advancedGrid);
     const clearMemory = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' });
     clearMemory.textContent = 'Clear private relationship memory';

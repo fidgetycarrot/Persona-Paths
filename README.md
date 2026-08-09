@@ -1,6 +1,6 @@
 # Persona Paths
 
-Version 0.1.8
+Version 0.1.9
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -71,14 +71,23 @@ bun run build
 - Keeps the Refresh connections button from v0.1.4.
 
 
-## v0.1.7 trigger fix
+## v0.1.9 trigger fix
 
 CYOA generation is now triggered by the browser-side `GENERATION_ENDED` event and forwarded to the backend. This preserves the active user's scope for operator-installed extensions. Swipe changes follow the same path.
 
 
-## v0.1.8 — Provider-safe repair pass
+## v0.1.9 — Provider-safe repair pass
 
 - Fixes Moonshot/Kimi HTTP 400 errors when a first generation returns empty or unusable content.
 - Repair attempts no longer insert the failed output as an `assistant` message.
 - Repair is now a fresh system+user request, with previous output included only as quoted context.
 - Adds clearer diagnostics if a provider returns empty content twice or produces invalid JSON after repair.
+
+
+## v0.1.9
+
+- Kimi-aware output budgeting: always-thinking Kimi models automatically receive at least 16k output tokens.
+- Kimi K3 uses low reasoning effort when Persona Paths reasoning is disabled (K3 cannot fully disable thinking).
+- Kimi K2.6/K2.5 still use their real thinking-off switch when reasoning is disabled.
+- Kimi fixed-temperature models no longer receive Persona Paths' generic temperature override.
+- Length-truncated repair attempts automatically receive additional output headroom.
