@@ -1,6 +1,6 @@
 # Persona Paths
 
-Version 0.1.3
+Version 0.1.4
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -16,7 +16,7 @@ This repository intentionally keeps its compiled entry files at the repository r
 The editable TypeScript sources are also kept at root (`backend.ts`, `frontend.ts`). `bun run build` recompiles them in place.
 
 
-### v0.1.3 UI fixes
+### v0.1.4 UI fixes
 - Connection selection now uses Lumiverse's native searchable select with portal rendering, so the menu escapes the drawer instead of being clipped into a tiny popup.
 - The floating Paths launcher now uses Lumiverse's native draggable float widget. It starts on the left so it stays out of the right-side drawer, can be dragged anywhere, snaps to an edge, and Lumiverse provides hide/reset-position controls.
 
@@ -61,3 +61,10 @@ It does not request interceptor or context-handler permissions.
 bun install
 bun run build
 ```
+
+
+## v0.1.4 — Connection discovery hardening
+- Explicitly scopes `spindle.connections.list(userId)` to the frontend caller.
+- Carries event user scope into CYOA generation.
+- Shows permission/connection lookup errors in the settings panel instead of silently displaying an empty picker.
+- Adds a Refresh connections button.

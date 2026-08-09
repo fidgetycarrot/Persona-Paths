@@ -1,6 +1,6 @@
 type Ctx = any
 
-const EXT_VERSION = '0.1.3'
+const EXT_VERSION = '0.1.4'
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`
 
 type Choice = { intent: string; title: string; text: string }
@@ -136,6 +136,8 @@ export function setup(ctx: Ctx) {
     }
     .pp-btn:hover { background:var(--lumiverse-fill-subtle); }
     .pp-persona-badge { font-size:11px; color:var(--lumiverse-text-muted); padding:7px 9px; background:var(--lumiverse-fill-subtle); border-radius:9px; }
+    .pp-connection-status { font-size:10.5px; line-height:1.35; color:var(--lumiverse-text-muted); margin-top:-7px; }
+    .pp-connection-status.error { color:var(--lumiverse-danger, #d97777); }
     .pp-divider { height:1px; background:var(--lumiverse-border); opacity:.7; }
     .pp-launcher {
       width:100%; height:100%; display:flex; align-items:center; justify-content:center; gap:7px; box-sizing:border-box;
@@ -337,6 +339,18 @@ export function setup(ctx: Ctx) {
     onChange: (connectionId: string) => scheduleSave({ connectionId }, 0),
   })
 
+  const connectionStatus = ctx.dom.createElement('div', { class: 'pp-connection-status' }) as HTMLElement
+  connectionStatus.textContent = 'Loading Lumiverse connections…'
+  settings.appendChild(connectionStatus)
+  const refreshConnections = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
+  refreshConnections.textContent = 'Refresh connections'
+  refreshConnections.addEventListener('click', () => {
+    connectionStatus.classList.remove('error')
+    connectionStatus.textContent = 'Refreshing Lumiverse connections…'
+    ctx.sendToBackend({ type: 'get_state' })
+  })
+  settings.appendChild(refreshConnections)
+
   const modelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'Leave blank to use connection model' }) as HTMLInputElement
   modelOverride.addEventListener('input', () => scheduleSave({ modelOverride: modelOverride.value }))
   settings.appendChild(createLabeledField(ctx, 'Model override', modelOverride, 'Optional exact model ID. Blank follows the selected connection profile.'))
@@ -460,6 +474,15 @@ export function setup(ctx: Ctx) {
       })),
     })
 
+    const connectionError = String(state?.connectionError || '')
+    if (connectionError) {
+      connectionStatus.classList.add('error')
+      connectionStatus.textContent = connectionError
+    } else {
+      connectionStatus.classList.remove('error')
+      connectionStatus.textContent = `${conns.length} Lumiverse LLM connection${conns.length === 1 ? '' : 's'} available.`
+    }
+
     const persona = state?.activePersona
     personaBadge.textContent = persona ? `Active persona: ${persona.name}${persona.title ? ` — ${persona.title}` : ''}` : 'Active persona: none'
     personaInstructions.disabled = !persona
@@ -472,6 +495,10 @@ export function setup(ctx: Ctx) {
     else if (payload.type === 'choices_loading') renderLoading(String(payload.messageId), String(payload.chatId))
     else if (payload.type === 'choices_ready' && payload.data) renderChoices(payload.data)
     else if (payload.type === 'choices_error') renderError(String(payload.messageId), String(payload.chatId), String(payload.error || 'Unknown error'))
+    else if (payload.type === 'request_error') {
+      connectionStatus.classList.add('error')
+      connectionStatus.textContent = String(payload.error || 'Persona Paths backend request failed.')
+    }
     else if (payload.type === 'memory_cleared') {
       clearMemory.textContent = 'Memory cleared ✓'
       setTimeout(() => { clearMemory.textContent = 'Clear private relationship memory' }, 1200)

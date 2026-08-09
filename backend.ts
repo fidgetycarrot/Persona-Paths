@@ -264,8 +264,11 @@ CURRENT ROLE-PLAY SCENE\n${scene}
 Generate the next-move choices for the USER now. Current scene evidence outranks stale notes.`
 }
 
-async function resolveConnection(cfg: Config) {
-  const connections = await spindle.connections.list()
+async function resolveConnection(cfg: Config, userId?: string) {
+  if (!spindle.permissions.has('generation')) {
+    throw new Error('Generation permission is not granted. Enable it for Persona Paths in Lumiverse Extensions.')
+  }
+  const connections = await spindle.connections.list(userId)
   if (!Array.isArray(connections) || !connections.length) throw new Error('No Lumiverse LLM connection profiles are available.')
   let conn = cfg.connectionId ? connections.find((c: any) => c.id === cfg.connectionId) : null
   if (!conn) conn = connections.find((c: any) => c.is_default) || connections[0]
@@ -278,8 +281,8 @@ async function generatePaths(args: {
   memoryNotes: string[]
   recentUserTurns: any[]
   sceneMessages: any[]
-}) {
-  const { conn } = await resolveConnection(config)
+}, userId?: string) {
+  const { conn } = await resolveConnection(config, userId)
   const system = buildSystemPrompt(config)
   const user = buildUserPrompt({
     ...args,
@@ -387,7 +390,7 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
       memoryNotes,
       recentUserTurns,
       sceneMessages,
-    })
+    }, userId)
 
     const entry: CachedPath = {
       chatId,
@@ -428,12 +431,32 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
 }
 
 async function sendState(userId?: string) {
-  const connections = await spindle.connections.list()
+  const generationGranted = spindle.permissions.has('generation')
+  let connections: any[] = []
+  let connectionError = ''
+
+  if (!generationGranted) {
+    connectionError = 'Generation permission is not granted to Persona Paths.'
+  } else {
+    try {
+      // Explicitly carry the frontend caller's user scope into the connection lookup.
+      // This matters in runtimes where an ambient user cannot be inferred reliably.
+      const listed = await spindle.connections.list(userId)
+      connections = Array.isArray(listed) ? listed : []
+      if (!connections.length) connectionError = 'Lumiverse returned zero LLM connection profiles for this user.'
+    } catch (err: any) {
+      connectionError = err?.message || String(err)
+      spindle.log.error(`Persona Paths connection lookup failed: ${connectionError}`)
+    }
+  }
+
   const persona = await spindle.personas.getActive()
   spindle.sendToFrontend({
     type: 'state',
     config,
     connections,
+    generationGranted,
+    connectionError,
     activePersona: persona ? { id: persona.id, name: persona.name, title: persona.title || '' } : null,
   }, userId)
 }
@@ -491,16 +514,20 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
   }
 })
 
-spindle.on('CHARACTER_MESSAGE_RENDERED', (payload: any) => {
+spindle.on('CHARACTER_MESSAGE_RENDERED', (payload: any, userId?: string) => {
   if (!payload?.chatId || !payload?.messageId) return
-  void handleAssistantMessage(String(payload.chatId), String(payload.messageId), false)
+  void handleAssistantMessage(String(payload.chatId), String(payload.messageId), false, userId)
 })
 
-spindle.on('MESSAGE_SWIPED', (payload: any) => {
+spindle.on('MESSAGE_SWIPED', (payload: any, userId?: string) => {
   if (!payload?.chatId || !payload?.message?.id || payload.message?.role !== 'assistant') return
   if (payload.action === 'navigated' || payload.action === 'updated' || payload.action === 'added') {
-    void handleAssistantMessage(String(payload.chatId), String(payload.message.id), false)
+    void handleAssistantMessage(String(payload.chatId), String(payload.message.id), false, userId)
   }
+})
+
+spindle.permissions.onChanged(({ permission }) => {
+  if (permission === 'generation') void sendState()
 })
 
 void loadState().then(() => {
