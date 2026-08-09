@@ -266,30 +266,58 @@ async function generatePaths(args, userId) {
     if (!config.useReasoning)
         request.reasoning = { source: 'off' };
     let response = await spindle.generate.raw(request);
+    let responseText = String(response?.content || '').trim();
     let parsed;
     try {
-        parsed = parseJsonObject(response.content);
+        parsed = parseJsonObject(responseText);
     }
     catch (err) {
         parsed = null;
     }
     let issues = validateResult(parsed, config.choiceCount, config.detail);
     if (issues.length) {
+        // Do not round-trip the failed model output as an assistant message. Some
+        // OpenAI-compatible providers (notably Moonshot/Kimi) reject an assistant
+        // message whose content is empty. A blank first response used to make the
+        // repair request fail with HTTP 400 before the model even saw it.
+        //
+        // Instead, retry as a fresh system+user request and include any prior output
+        // only as quoted repair context inside the user message. This is also more
+        // portable across providers with stricter message-role validation.
+        const priorForRepair = responseText
+            ? compactText(responseText, 12000)
+            : '(The previous attempt returned no usable final content.)';
+        const repairUser = `${user}
+
+REPAIR PASS
+The previous attempt did not satisfy the required JSON contract. Problems detected: ${issues.join('; ')}.
+
+PREVIOUS OUTPUT (reference only; it may be empty, malformed, or truncated):
+${priorForRepair}
+
+Generate the answer again from scratch. Return one corrected JSON object only. Preserve strong persona fidelity, concrete action, distinct trajectories, the selected POV/tense, and the authorship boundary. Do not mention this repair pass.`;
         const repairRequest = {
             ...request,
             messages: [
                 { role: 'system', content: system },
-                { role: 'user', content: user },
-                { role: 'assistant', content: String(response.content || '').slice(0, 12000) },
-                { role: 'user', content: `Your previous JSON failed validation: ${issues.join('; ')}. Return a corrected JSON object only. Preserve strong persona fidelity, concrete action, distinct trajectories, and the authorship boundary.` },
+                { role: 'user', content: repairUser },
             ],
         };
         response = await spindle.generate.raw(repairRequest);
-        parsed = parseJsonObject(response.content);
+        responseText = String(response?.content || '').trim();
+        if (!responseText) {
+            throw new Error(`CYOA provider returned empty content twice${response?.finish_reason ? ` (finish reason: ${response.finish_reason})` : ''}. Try increasing Max output tokens or using another model if this persists.`);
+        }
+        try {
+            parsed = parseJsonObject(responseText);
+        }
+        catch (err) {
+            throw new Error(`CYOA repair response was not valid JSON${response?.finish_reason ? ` (finish reason: ${response.finish_reason})` : ''}.`);
+        }
         issues = validateResult(parsed, config.choiceCount, config.detail);
     }
     if (issues.length)
-        throw new Error(`CYOA output failed validation: ${issues.join('; ')}`);
+        throw new Error(`CYOA output failed validation after repair: ${issues.join('; ')}`);
     parsed.choices = parsed.choices.map((choice) => ({
         intent: String(choice.intent || '').trim(),
         title: String(choice.title || '').trim(),
