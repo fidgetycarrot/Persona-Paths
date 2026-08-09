@@ -91,3 +91,9 @@ CYOA generation is now triggered by the browser-side `GENERATION_ENDED` event an
 - Kimi K2.6/K2.5 still use their real thinking-off switch when reasoning is disabled.
 - Kimi fixed-temperature models no longer receive Persona Paths' generic temperature override.
 - Length-truncated repair attempts automatically receive additional output headroom.
+
+## v0.1.10 — manual generation
+
+Persona Paths now has a first-class **Generate Paths for latest reply** action in the drawer and in Lumiverse's chat-input Extras menu. Manual runs resolve the user's currently active chat, find its latest non-empty assistant reply, and force a fresh Persona Paths generation even if automatic generation is disabled or the browser/app was refreshed and the old Retry card disappeared.
+
+Manual generation requires Lumiverse's `chats` permission in addition to the existing `chat_mutation` permission: `chats` is used only to resolve the currently active chat; `chat_mutation` reads its messages. Choices remain extension-private and are never injected into the story prompt.

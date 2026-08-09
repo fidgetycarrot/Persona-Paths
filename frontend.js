@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.9';
+const EXT_VERSION = '0.1.10';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -126,6 +126,14 @@ export function setup(ctx) {
       padding:8px 10px; font-size:11px; cursor:pointer;
     }
     .pp-btn:hover { background:var(--lumiverse-fill-subtle); }
+    .pp-btn.pp-primary {
+      font-weight:750; border-color:color-mix(in srgb, var(--lumiverse-accent, currentColor) 48%, var(--lumiverse-border));
+      background:color-mix(in srgb, var(--lumiverse-accent, currentColor) 10%, var(--lumiverse-fill));
+    }
+    .pp-btn.pp-primary:hover { background:color-mix(in srgb, var(--lumiverse-accent, currentColor) 16%, var(--lumiverse-fill)); }
+    .pp-btn:disabled { opacity:.55; cursor:default; }
+    .pp-manual-status { font-size:10.5px; line-height:1.35; color:var(--lumiverse-text-muted); margin-top:-7px; min-height:1em; }
+    .pp-manual-status.error { color:var(--lumiverse-danger, #d97777); }
     .pp-persona-badge { font-size:11px; color:var(--lumiverse-text-muted); padding:7px 9px; background:var(--lumiverse-fill-subtle); border-radius:9px; }
     .pp-connection-status { font-size:10.5px; line-height:1.35; color:var(--lumiverse-text-muted); margin-top:-7px; }
     .pp-connection-status.error { color:var(--lumiverse-danger, #d97777); }
@@ -362,6 +370,11 @@ export function setup(ctx) {
         unsubOpenAction = openAction.onClick(() => tab.activate());
     }
     catch { }
+    // Manual generation is intentionally independent of the automatic trigger.
+    // It resolves the active chat on the backend, so it still works after a
+    // browser refresh/update when no old Persona Paths retry card is mounted.
+    let manualAction = null;
+    let unsubManualAction = () => { };
     const settings = ctx.dom.createElement('div', { class: 'pp-settings' });
     tab.root.appendChild(settings);
     const heading = ctx.dom.createElement('h3');
@@ -376,6 +389,34 @@ export function setup(ctx) {
     enabledLabel.append(enabled, document.createTextNode('Generate choices after character replies'));
     enabled.addEventListener('change', () => scheduleSave({ enabled: enabled.checked }, 0));
     settings.appendChild(enabledLabel);
+    const manualRun = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn pp-primary' });
+    manualRun.textContent = 'Generate Paths for latest reply';
+    const manualStatus = ctx.dom.createElement('div', { class: 'pp-manual-status' });
+    manualStatus.textContent = 'Manual runs ignore the automatic on/off toggle and regenerate the latest assistant reply.';
+    let manualPending = false;
+    function triggerManualGeneration() {
+        if (manualPending)
+            return;
+        manualPending = true;
+        manualRun.disabled = true;
+        manualRun.textContent = 'Finding latest reply…';
+        manualStatus.classList.remove('error');
+        manualStatus.textContent = 'Resolving the active chat and latest assistant reply…';
+        ctx.sendToBackend({ type: 'manual_generate_latest' });
+    }
+    manualRun.addEventListener('click', triggerManualGeneration);
+    settings.append(manualRun, manualStatus);
+    // Also make the same manual run available from Lumiverse's native Extras menu.
+    try {
+        manualAction = ctx.ui.registerInputBarAction({
+            id: 'generate-persona-paths',
+            label: 'Generate Paths for Latest Reply',
+            iconSvg: PATHS_ICON,
+            enabled: true,
+        });
+        unsubManualAction = manualAction.onClick(triggerManualGeneration);
+    }
+    catch { }
     const connectionSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' });
     settings.appendChild(createLabeledField(ctx, 'LLM connection', connectionSlot, 'Uses a separate Lumiverse connection profile from your story model if you want.'));
     const connectionPicker = ctx.components.mountSelect(connectionSlot, {
@@ -553,15 +594,53 @@ export function setup(ctx) {
             return;
         if (payload.type === 'state')
             applyState(payload);
-        else if (payload.type === 'choices_loading')
+        else if (payload.type === 'manual_target') {
+            manualRun.textContent = 'Generating latest reply…';
+            manualStatus.classList.remove('error');
+            manualStatus.textContent = 'Manual Persona Paths generation is running.';
+        }
+        else if (payload.type === 'choices_loading') {
             renderLoading(String(payload.messageId), String(payload.chatId));
-        else if (payload.type === 'choices_ready' && payload.data)
+            if (manualPending)
+                manualRun.textContent = 'Generating latest reply…';
+        }
+        else if (payload.type === 'choices_ready' && payload.data) {
             renderChoices(payload.data);
-        else if (payload.type === 'choices_error')
+            if (manualPending) {
+                manualPending = false;
+                manualRun.disabled = false;
+                manualRun.textContent = 'Generate Paths for latest reply';
+                manualStatus.classList.remove('error');
+                manualStatus.textContent = 'Fresh choices generated for the latest assistant reply.';
+            }
+        }
+        else if (payload.type === 'choices_error') {
             renderError(String(payload.messageId), String(payload.chatId), String(payload.error || 'Unknown error'));
+            if (manualPending) {
+                manualPending = false;
+                manualRun.disabled = false;
+                manualRun.textContent = 'Generate Paths for latest reply';
+                manualStatus.classList.add('error');
+                manualStatus.textContent = String(payload.error || 'Manual Persona Paths generation failed.');
+            }
+        }
+        else if (payload.type === 'manual_error') {
+            manualPending = false;
+            manualRun.disabled = false;
+            manualRun.textContent = 'Generate Paths for latest reply';
+            manualStatus.classList.add('error');
+            manualStatus.textContent = String(payload.error || 'Manual Persona Paths generation failed.');
+        }
         else if (payload.type === 'request_error') {
             connectionStatus.classList.add('error');
             connectionStatus.textContent = String(payload.error || 'Persona Paths backend request failed.');
+            if (manualPending) {
+                manualPending = false;
+                manualRun.disabled = false;
+                manualRun.textContent = 'Generate Paths for latest reply';
+                manualStatus.classList.add('error');
+                manualStatus.textContent = String(payload.error || 'Manual Persona Paths generation failed.');
+            }
         }
         else if (payload.type === 'memory_cleared') {
             clearMemory.textContent = 'Memory cleared ✓';
@@ -704,6 +783,14 @@ export function setup(ctx) {
         catch { }
         try {
             openAction?.destroy?.();
+        }
+        catch { }
+        try {
+            unsubManualAction();
+        }
+        catch { }
+        try {
+            manualAction?.destroy?.();
         }
         catch { }
         try {

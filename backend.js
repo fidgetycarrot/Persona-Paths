@@ -566,6 +566,29 @@ spindle.onFrontendMessage(async (payload, userId) => {
                 await handleAssistantMessage(chatId, messageId, true, userId);
             return;
         }
+        if (payload.type === 'manual_generate_latest') {
+            if (!userId)
+                throw new Error('Persona Paths could not resolve the current Lumiverse user for manual generation.');
+            if (!spindle.permissions.has('chats')) {
+                throw new Error('The Chats permission is required for manual generation so Persona Paths can resolve the active chat after a refresh.');
+            }
+            const activeChat = await spindle.chats.getActive(userId);
+            if (!activeChat?.id)
+                throw new Error('Open a Lumiverse chat before running Persona Paths manually.');
+            const messages = await spindle.chat.getMessages(activeChat.id);
+            const latestAssistant = [...messages].reverse().find((m) => m?.role === 'assistant' && String(m?.content || '').trim().length > 0);
+            if (!latestAssistant?.id)
+                throw new Error('The active chat does not have an assistant reply to generate paths for yet.');
+            spindle.sendToFrontend({
+                type: 'manual_target',
+                chatId: activeChat.id,
+                messageId: latestAssistant.id,
+            }, userId);
+            // Force=true deliberately replaces/retries any cached result for this reply,
+            // and bypasses the automatic-generation enabled toggle.
+            await handleAssistantMessage(activeChat.id, String(latestAssistant.id), true, userId);
+            return;
+        }
         if (payload.type === 'clear_relationship_memory') {
             relationshipMemory = {};
             await saveRelationshipMemory();
@@ -574,8 +597,14 @@ spindle.onFrontendMessage(async (payload, userId) => {
         }
     }
     catch (err) {
-        spindle.log.error(`Frontend request failed: ${err?.message || String(err)}`);
-        spindle.sendToFrontend({ type: 'request_error', error: err?.message || String(err) }, userId);
+        const error = err?.message || String(err);
+        spindle.log.error(`Frontend request failed: ${error}`);
+        if (payload?.type === 'manual_generate_latest') {
+            spindle.sendToFrontend({ type: 'manual_error', error }, userId);
+        }
+        else {
+            spindle.sendToFrontend({ type: 'request_error', error }, userId);
+        }
     }
 });
 // CYOA generation triggers are intentionally received from the frontend via
