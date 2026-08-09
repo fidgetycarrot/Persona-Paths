@@ -9,6 +9,8 @@ const DEFAULT_CONFIG = {
     pov: 'auto',
     tense: 'auto',
     detail: 'normal',
+    generationDelaySeconds: 3,
+    adultContent: 'match_scene',
     temperature: 0.85,
     maxTokens: 1400,
     connectionId: '',
@@ -35,12 +37,15 @@ function normalizeConfig(input) {
     next.recentUserExamples = Math.round(clampNumber(next.recentUserExamples, 2, 12, DEFAULT_CONFIG.recentUserExamples));
     next.temperature = clampNumber(next.temperature, 0, 2, DEFAULT_CONFIG.temperature);
     next.maxTokens = Math.round(clampNumber(next.maxTokens, 500, 3000, DEFAULT_CONFIG.maxTokens));
+    next.generationDelaySeconds = clampNumber(next.generationDelaySeconds, 0, 15, DEFAULT_CONFIG.generationDelaySeconds);
     if (!['auto', 'first', 'second', 'third'].includes(next.pov))
         next.pov = 'auto';
     if (!['auto', 'present', 'past'].includes(next.tense))
         next.tense = 'auto';
     if (!['compact', 'normal', 'detailed'].includes(next.detail))
         next.detail = 'normal';
+    if (!['match_scene', 'allow_explicit', 'suggestive'].includes(next.adultContent))
+        next.adultContent = 'match_scene';
     if (!next.personaOverrides || typeof next.personaOverrides !== 'object')
         next.personaOverrides = {};
     next.globalInstructions = String(next.globalInstructions || '');
@@ -129,6 +134,16 @@ function detailInstruction(detail) {
         return 'Each choice should be 4–7 sentences, usually 120–220 words, with clear action, body language, intent, and optional dialogue.';
     return 'Each choice should be 2–5 sentences, usually 75–150 words, with enough concrete action and intent for the story model to react to.';
 }
+function adultContentInstruction(mode) {
+    const shared = 'Sexual content is permitted only when every involved character is clearly an adult (18+). Never sexualize minors or age-ambiguous characters.';
+    if (mode === 'allow_explicit') {
+        return `${shared} When the current adult scene or relationship plausibly supports sexual action, explicit sexual language and actions are allowed. Do not euphemize or sanitize merely because the content is sexual. Do not force sexual escalation into unrelated scenes.`;
+    }
+    if (mode === 'suggestive') {
+        return `${shared} Sexual or romantic choices may be suggestive, sensual, or clearly intimate, but keep the choice text non-graphic and avoid explicit anatomical detail.`;
+    }
+    return `${shared} Match the established scene's level of adult sexual explicitness. If the scene is already explicit, you may remain explicit without sanitizing it; if the scene is only romantic/suggestive or nonsexual, do not artificially escalate it.`;
+}
 function buildSystemPrompt(cfg) {
     const requestedPov = cfg.pov === 'auto'
         ? 'Infer POV only from the player\'s recent USER turns. If ambiguous, use first person.'
@@ -169,6 +184,7 @@ STYLE
 - ${requestedPov}
 - ${requestedTense}
 - Match the player's established voice, including bluntness, profanity, humor, tenderness, formality, or roughness when supported.
+- ADULT CONTENT: ${adultContentInstruction(cfg.adultContent)}
 - The choice text must be ready to paste directly into the user's composer. Do not put labels or explanations inside the pasted text.
 
 PRIVATE RELATIONSHIP NOTES

@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.6';
+const EXT_VERSION = '0.1.7';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -60,6 +60,10 @@ export function setup(ctx) {
     const dataByMessage = new Map();
     let currentState = null;
     let saveTimer = null;
+    const renderedMessages = new Set();
+    const awaitingRender = new Map();
+    const choiceTimers = new Map();
+    const renderFallbackTimers = new Map();
     const removeStyle = ctx.dom.addStyle(`
     .pp-card {
       margin: 12px 0 2px;
@@ -254,6 +258,63 @@ export function setup(ctx) {
             clearTimeout(saveTimer);
         saveTimer = setTimeout(() => ctx.sendToBackend({ type: 'save_config', patch }), delay);
     }
+    function delayMs() {
+        const seconds = Number(currentState?.config?.generationDelaySeconds ?? 3);
+        return Math.max(0, Math.min(15, Number.isFinite(seconds) ? seconds : 3)) * 1000;
+    }
+    function cancelChoiceTimer(messageId) {
+        const pending = choiceTimers.get(messageId);
+        if (pending)
+            clearTimeout(pending.timer);
+        choiceTimers.delete(messageId);
+        const fallback = renderFallbackTimers.get(messageId);
+        if (fallback)
+            clearTimeout(fallback.timer);
+        renderFallbackTimers.delete(messageId);
+        awaitingRender.delete(messageId);
+    }
+    function cancelChatTimers(chatId) {
+        for (const [messageId, entry] of choiceTimers) {
+            if (entry.chatId === chatId)
+                cancelChoiceTimer(messageId);
+        }
+        for (const [messageId, entry] of renderFallbackTimers) {
+            if (entry.chatId === chatId)
+                cancelChoiceTimer(messageId);
+        }
+        for (const [messageId, pendingChatId] of awaitingRender) {
+            if (pendingChatId === chatId)
+                cancelChoiceTimer(messageId);
+        }
+    }
+    function scheduleSettledGeneration(chatId, messageId) {
+        cancelChoiceTimer(messageId);
+        const timer = setTimeout(() => {
+            choiceTimers.delete(messageId);
+            if (currentState?.config?.enabled === false)
+                return;
+            ctx.sendToBackend({ type: 'ensure_choices', chatId, messageId });
+        }, delayMs());
+        choiceTimers.set(messageId, { timer, chatId });
+    }
+    function waitForRenderThenGenerate(chatId, messageId) {
+        cancelChoiceTimer(messageId);
+        awaitingRender.set(messageId, chatId);
+        if (renderedMessages.has(messageId)) {
+            scheduleSettledGeneration(chatId, messageId);
+            return;
+        }
+        // Safety fallback: if a Lumiverse/UI quirk prevents CHARACTER_MESSAGE_RENDERED
+        // from arriving, wait an extra five seconds before beginning the configured
+        // settle delay. Normal operation uses the render event and never hits this.
+        const fallbackTimer = setTimeout(() => {
+            renderFallbackTimers.delete(messageId);
+            if (awaitingRender.get(messageId) !== chatId)
+                return;
+            scheduleSettledGeneration(chatId, messageId);
+        }, 5000);
+        renderFallbackTimers.set(messageId, { timer: fallbackTimer, chatId });
+    }
     const tab = ctx.ui.registerDrawerTab({
         id: 'persona-paths',
         title: 'Persona Paths',
@@ -372,6 +433,25 @@ export function setup(ctx) {
     choiceCount.addEventListener('change', () => scheduleSave({ choiceCount: Number(choiceCount.value) }, 0));
     grid.append(createLabeledField(ctx, 'POV / person', pov), createLabeledField(ctx, 'Tense', tense), createLabeledField(ctx, 'Choice detail', detail), createLabeledField(ctx, 'Number of choices', choiceCount));
     settings.appendChild(grid);
+    const behaviorGrid = ctx.dom.createElement('div', { class: 'pp-grid' });
+    const generationDelay = ctx.dom.createElement('select');
+    [['0', 'No delay'], ['2', '2 seconds'], ['3', '3 seconds (recommended)'], ['5', '5 seconds'], ['10', '10 seconds']].forEach(([v, l]) => {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = l;
+        generationDelay.appendChild(o);
+    });
+    generationDelay.addEventListener('change', () => scheduleSave({ generationDelaySeconds: Number(generationDelay.value) }, 0));
+    const adultContent = ctx.dom.createElement('select');
+    [['match_scene', 'Match scene'], ['allow_explicit', 'Allow explicit'], ['suggestive', 'Keep suggestive']].forEach(([v, l]) => {
+        const o = document.createElement('option');
+        o.value = v;
+        o.textContent = l;
+        adultContent.appendChild(o);
+    });
+    adultContent.addEventListener('change', () => scheduleSave({ adultContent: adultContent.value }, 0));
+    behaviorGrid.append(createLabeledField(ctx, 'Choice generation delay', generationDelay, 'Waits until the assistant message has rendered, then gives Lumiverse this extra settling time.'), createLabeledField(ctx, 'Adult-content handling', adultContent, 'Match scene keeps the current explicitness. Allow explicit permits explicit adult choices when contextually appropriate; it does not force escalation.'));
+    settings.appendChild(behaviorGrid);
     const grid2 = ctx.dom.createElement('div', { class: 'pp-grid' });
     const contextMessages = ctx.dom.createElement('input', { type: 'number', min: '6', max: '30', step: '1' });
     contextMessages.addEventListener('change', () => scheduleSave({ contextMessages: Number(contextMessages.value) }, 0));
@@ -425,6 +505,8 @@ export function setup(ctx) {
         pov.value = cfg.pov || 'auto';
         tense.value = cfg.tense || 'auto';
         detail.value = cfg.detail || 'normal';
+        generationDelay.value = String(cfg.generationDelaySeconds ?? 3);
+        adultContent.value = cfg.adultContent || 'match_scene';
         choiceCount.value = String(cfg.choiceCount ?? 4);
         contextMessages.value = String(cfg.contextMessages ?? 12);
         recentUserExamples.value = String(cfg.recentUserExamples ?? 6);
@@ -484,27 +566,48 @@ export function setup(ctx) {
         }
     });
     let unsubRendered = () => { };
+    let unsubGenerationStarted = () => { };
     let unsubGenerationEnded = () => { };
+    let unsubGenerationStopped = () => { };
     let unsubSwipe = () => { };
     let unsubChatSwitch = () => { };
     try {
         unsubRendered = ctx.events.on('CHARACTER_MESSAGE_RENDERED', (payload) => {
             const id = String(payload?.messageId || '');
+            const chatId = String(payload?.chatId || '');
             if (!id)
                 return;
+            renderedMessages.add(id);
             if (dataByMessage.has(id))
                 renderChoices(dataByMessage.get(id));
             else
                 ctx.sendToBackend({ type: 'load_choices', messageId: id });
+            const pendingChatId = awaitingRender.get(id) || chatId;
+            if (pendingChatId && awaitingRender.has(id))
+                scheduleSettledGeneration(pendingChatId, id);
         });
     }
     catch (err) {
         console.warn('[Persona Paths] CHARACTER_MESSAGE_RENDERED subscription failed', err);
     }
-    // Generate only after Lumiverse reports that the normal story generation has
-    // finished and saved its assistant message. Triggering from the frontend is
-    // intentional: onFrontendMessage carries the concrete userId required by
-    // operator-scoped extensions, while backend lifecycle events may not.
+    // A new story generation supersedes any not-yet-started CYOA work in that chat.
+    // This keeps Persona Paths out of the way if the user quickly continues/regenerates.
+    try {
+        unsubGenerationStarted = ctx.events.on('GENERATION_STARTED', (payload) => {
+            const chatId = String(payload?.chatId || '');
+            const targetMessageId = String(payload?.targetMessageId || '');
+            if (chatId)
+                cancelChatTimers(chatId);
+            if (targetMessageId)
+                renderedMessages.delete(targetMessageId);
+        });
+    }
+    catch (err) {
+        console.warn('[Persona Paths] GENERATION_STARTED subscription failed', err);
+    }
+    // Conservative trigger: the story generation must finish AND its assistant
+    // message must render. Only then do we wait the configured settling delay.
+    // Frontend routing preserves the concrete userId for operator-scoped installs.
     try {
         unsubGenerationEnded = ctx.events.on('GENERATION_ENDED', (payload) => {
             if (payload?.error)
@@ -513,24 +616,34 @@ export function setup(ctx) {
             const messageId = String(payload?.messageId || '');
             if (!chatId || !messageId)
                 return;
-            ctx.sendToBackend({ type: 'ensure_choices', chatId, messageId });
+            waitForRenderThenGenerate(chatId, messageId);
         });
     }
     catch (err) {
         console.warn('[Persona Paths] GENERATION_ENDED subscription failed', err);
     }
-    // Swipes are also routed through the frontend so regeneration/navigation keeps
-    // the same explicit user scope. The backend content-hash cache dedupes repeats.
+    try {
+        unsubGenerationStopped = ctx.events.on('GENERATION_STOPPED', (payload) => {
+            const chatId = String(payload?.chatId || '');
+            if (chatId)
+                cancelChatTimers(chatId);
+        });
+    }
+    catch (err) {
+        console.warn('[Persona Paths] GENERATION_STOPPED subscription failed', err);
+    }
+    // Swipes can change content while keeping the same message ID. Forget the old
+    // render state, then wait for the changed assistant bubble to render and settle.
     try {
         unsubSwipe = ctx.events.on('MESSAGE_SWIPED', (payload) => {
             if (!payload?.chatId || !payload?.message?.id || payload?.message?.role !== 'assistant')
                 return;
             if (payload.action === 'navigated' || payload.action === 'updated' || payload.action === 'added') {
-                ctx.sendToBackend({
-                    type: 'ensure_choices',
-                    chatId: String(payload.chatId),
-                    messageId: String(payload.message.id),
-                });
+                const chatId = String(payload.chatId);
+                const messageId = String(payload.message.id);
+                cancelChoiceTimer(messageId);
+                renderedMessages.delete(messageId);
+                waitForRenderThenGenerate(chatId, messageId);
             }
         });
     }
@@ -539,6 +652,12 @@ export function setup(ctx) {
     }
     try {
         unsubChatSwitch = ctx.events.on('CHAT_SWITCHED', () => {
+            for (const messageId of Array.from(choiceTimers.keys()))
+                cancelChoiceTimer(messageId);
+            for (const messageId of Array.from(renderFallbackTimers.keys()))
+                cancelChoiceTimer(messageId);
+            awaitingRender.clear();
+            renderedMessages.clear();
             cards.clear();
             dataByMessage.clear();
             setTimeout(() => {
@@ -566,8 +685,14 @@ export function setup(ctx) {
         if (saveTimer)
             clearTimeout(saveTimer);
         unsubBackend();
+        for (const messageId of Array.from(choiceTimers.keys()))
+            cancelChoiceTimer(messageId);
+        for (const messageId of Array.from(renderFallbackTimers.keys()))
+            cancelChoiceTimer(messageId);
         unsubRendered();
+        unsubGenerationStarted();
         unsubGenerationEnded();
+        unsubGenerationStopped();
         unsubSwipe();
         unsubChatSwitch();
         try {
