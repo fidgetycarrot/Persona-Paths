@@ -1,5 +1,7 @@
 # Persona Paths
 
+**Version 0.1.1**
+
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
 ## What makes it different
@@ -15,6 +17,16 @@ Persona Paths is a Lumiverse/Spindle extension that creates private, persona-awa
 - **Private relationship memory:** Optional short behavior/relationship notes are stored only in the extension's scoped storage.
 - **Swipe-aware:** If the assistant reply changes via swipe, Persona Paths regenerates choices for the new content.
 - **Click to edit:** Clicking a choice fills the normal Lumiverse composer but never auto-sends it.
+
+## Opening Persona Paths
+
+Persona Paths deliberately exposes three access paths so it is not dependent on a single Lumiverse navigation surface:
+
+- Click the floating **Paths** launcher near the lower-right of the chat.
+- Open the **Paths** drawer tab in Lumiverse's sidebar.
+- Open the chat-input **Extras** menu and choose **Open Persona Paths**.
+
+The settings panel shows its version directly under the Persona Paths heading so stale frontend bundles are easy to spot.
 
 ## Permissions
 

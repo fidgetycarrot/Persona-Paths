@@ -1,3 +1,5 @@
+const EXT_VERSION = '0.1.1';
+const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
     const title = ctx.dom.createElement('span', { class: 'pp-label' });
@@ -122,6 +124,16 @@ export function setup(ctx) {
     .pp-btn:hover { background:var(--lumiverse-fill-subtle); }
     .pp-persona-badge { font-size:11px; color:var(--lumiverse-text-muted); padding:7px 9px; background:var(--lumiverse-fill-subtle); border-radius:9px; }
     .pp-divider { height:1px; background:var(--lumiverse-border); opacity:.7; }
+    .pp-launcher {
+      position:fixed; right:16px; bottom:92px; z-index:90; display:flex; align-items:center; gap:7px;
+      border:1px solid var(--lumiverse-border); border-radius:999px; padding:9px 12px; cursor:pointer;
+      background:color-mix(in srgb, var(--lumiverse-fill) 92%, transparent); color:var(--lumiverse-text);
+      box-shadow:0 7px 24px rgba(0,0,0,.24); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+      font:inherit; font-size:12px; font-weight:750; letter-spacing:.01em;
+    }
+    .pp-launcher:hover { background:var(--lumiverse-fill-subtle); transform:translateY(-1px); }
+    .pp-launcher svg { width:16px; height:16px; color:var(--lumiverse-accent, currentColor); }
+    .pp-version { font-size:10px; color:var(--lumiverse-text-muted); opacity:.7; margin-top:-8px; }
     @media (max-width: 620px) { .pp-grid { grid-template-columns:1fr; } .pp-choice-text { font-size:12px; } }
   `);
     function ensureCard(messageId, chatId) {
@@ -239,14 +251,58 @@ export function setup(ctx) {
             clearTimeout(saveTimer);
         saveTimer = setTimeout(() => ctx.sendToBackend({ type: 'save_config', patch }), delay);
     }
-    const tab = ctx.ui.registerDrawerTab({ id: 'persona-paths', title: 'Persona Paths' });
+    const tab = ctx.ui.registerDrawerTab({
+        id: 'persona-paths',
+        title: 'Persona Paths',
+        shortName: 'Paths',
+        headerTitle: 'Persona Paths',
+        description: 'Configure private persona-aware next-move choices',
+        keywords: ['cyoa', 'choices', 'roleplay', 'persona', 'paths'],
+        iconSvg: PATHS_ICON,
+    });
+    // Explicit launcher: do not rely on users discovering the drawer tab.
+    // This mirrors the hardened access pattern that proved reliable in LumiDraw.
+    let launcher = document.querySelector('[data-persona-paths-launcher]');
+    let ownsLauncher = false;
+    if (!launcher) {
+        try {
+            launcher = ctx.dom.createElement('button', { type: 'button', class: 'pp-launcher' });
+        }
+        catch {
+            launcher = document.createElement('button');
+            launcher.type = 'button';
+            launcher.className = 'pp-launcher';
+        }
+        launcher.setAttribute('data-persona-paths-launcher', 'true');
+        launcher.title = `Open Persona Paths v${EXT_VERSION}`;
+        launcher.setAttribute('aria-label', 'Open Persona Paths');
+        launcher.innerHTML = `${PATHS_ICON}<span>Paths</span>`;
+        document.body.appendChild(launcher);
+        ownsLauncher = true;
+    }
+    launcher.addEventListener('click', () => tab.activate());
+    // Also expose a native chat-input Extras action as a second access path.
+    let openAction = null;
+    let unsubOpenAction = () => { };
+    try {
+        openAction = ctx.ui.registerInputBarAction({
+            id: 'open-persona-paths',
+            label: 'Open Persona Paths',
+            iconSvg: PATHS_ICON,
+            enabled: true,
+        });
+        unsubOpenAction = openAction.onClick(() => tab.activate());
+    }
+    catch { }
     const settings = ctx.dom.createElement('div', { class: 'pp-settings' });
     tab.root.appendChild(settings);
     const heading = ctx.dom.createElement('h3');
     heading.textContent = 'Persona Paths';
+    const version = ctx.dom.createElement('div', { class: 'pp-version' });
+    version.textContent = `v${EXT_VERSION}`;
     const intro = ctx.dom.createElement('p');
     intro.textContent = 'Private, persona-aware next moves. The extension reads the role-play, but its choices and relationship notes are never inserted into story context.';
-    settings.append(heading, intro);
+    settings.append(heading, version, intro);
     const enabled = ctx.dom.createElement('input', { type: 'checkbox' });
     const enabledLabel = ctx.dom.createElement('label', { class: 'pp-check' });
     enabledLabel.append(enabled, document.createTextNode('Generate choices after character replies'));
@@ -385,35 +441,63 @@ export function setup(ctx) {
             setTimeout(() => { clearMemory.textContent = 'Clear private relationship memory'; }, 1200);
         }
     });
-    const unsubRendered = ctx.events.on('CHARACTER_MESSAGE_RENDERED', (payload) => {
-        const id = String(payload?.messageId || '');
-        if (!id)
-            return;
-        if (dataByMessage.has(id))
-            renderChoices(dataByMessage.get(id));
-        else
-            ctx.sendToBackend({ type: 'load_choices', messageId: id });
-    });
-    const unsubChatSwitch = ctx.events.on('CHAT_SWITCHED', () => {
-        cards.clear();
-        dataByMessage.clear();
-        setTimeout(() => {
-            const ids = ctx.messages.listMessageIds();
-            if (ids?.length)
-                ctx.sendToBackend({ type: 'load_choices', messageIds: ids.slice(-40) });
-            ctx.sendToBackend({ type: 'get_state' });
-        }, 80);
-    });
+    let unsubRendered = () => { };
+    let unsubChatSwitch = () => { };
+    try {
+        unsubRendered = ctx.events.on('CHARACTER_MESSAGE_RENDERED', (payload) => {
+            const id = String(payload?.messageId || '');
+            if (!id)
+                return;
+            if (dataByMessage.has(id))
+                renderChoices(dataByMessage.get(id));
+            else
+                ctx.sendToBackend({ type: 'load_choices', messageId: id });
+        });
+    }
+    catch (err) {
+        console.warn('[Persona Paths] CHARACTER_MESSAGE_RENDERED subscription failed', err);
+    }
+    try {
+        unsubChatSwitch = ctx.events.on('CHAT_SWITCHED', () => {
+            cards.clear();
+            dataByMessage.clear();
+            setTimeout(() => {
+                try {
+                    const ids = ctx.messages.listMessageIds();
+                    if (ids?.length)
+                        ctx.sendToBackend({ type: 'load_choices', messageIds: ids.slice(-40) });
+                }
+                catch { }
+                ctx.sendToBackend({ type: 'get_state' });
+            }, 80);
+        });
+    }
+    catch (err) {
+        console.warn('[Persona Paths] CHAT_SWITCHED subscription failed', err);
+    }
     ctx.sendToBackend({ type: 'get_state' });
-    const existingIds = ctx.messages.listMessageIds();
-    if (existingIds?.length)
-        ctx.sendToBackend({ type: 'load_choices', messageIds: existingIds.slice(-40) });
+    try {
+        const existingIds = ctx.messages.listMessageIds();
+        if (existingIds?.length)
+            ctx.sendToBackend({ type: 'load_choices', messageIds: existingIds.slice(-40) });
+    }
+    catch { }
     return () => {
         if (saveTimer)
             clearTimeout(saveTimer);
         unsubBackend();
         unsubRendered();
         unsubChatSwitch();
+        try {
+            unsubOpenAction();
+        }
+        catch { }
+        try {
+            openAction?.destroy?.();
+        }
+        catch { }
+        if (ownsLauncher)
+            launcher?.remove();
         removeStyle();
         tab.destroy();
         ctx.dom.cleanup();
