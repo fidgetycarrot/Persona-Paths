@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.4';
+const EXT_VERSION = '0.1.5';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -456,7 +456,10 @@ export function setup(ctx) {
             connectionStatus.textContent = `${conns.length} Lumiverse LLM connection${conns.length === 1 ? '' : 's'} available.`;
         }
         const persona = state?.activePersona;
-        personaBadge.textContent = persona ? `Active persona: ${persona.name}${persona.title ? ` — ${persona.title}` : ''}` : 'Active persona: none';
+        const personaError = String(state?.personaError || '');
+        personaBadge.textContent = personaError
+            ? `Active persona unavailable: ${personaError}`
+            : (persona ? `Active persona: ${persona.name}${persona.title ? ` — ${persona.title}` : ''}` : 'Active persona: none');
         personaInstructions.disabled = !persona;
         personaInstructions.value = persona?.id ? (cfg.personaOverrides?.[persona.id] || '') : '';
     }

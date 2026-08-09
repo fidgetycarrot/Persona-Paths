@@ -293,6 +293,9 @@ async function generatePaths(args: {
     provider: conn.provider,
     model: config.modelOverride.trim() || conn.model,
     connection_id: conn.id,
+    // Raw generation is also user-scoped for operator-installed extensions.
+    // The host reads userId directly from the generation input payload.
+    userId,
     messages: [
       { role: 'system', content: system },
       { role: 'user', content: user },
@@ -368,7 +371,7 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
 
     spindle.sendToFrontend({ type: 'choices_loading', chatId, messageId }, userId)
 
-    const persona = await spindle.personas.getActive()
+    const persona = await spindle.personas.getActive(userId)
     const personaId = persona?.id || 'no_persona'
     const memoryKey = `${chatId}::${personaId}`
     const storedMemory = relationshipMemory[memoryKey]
@@ -450,13 +453,22 @@ async function sendState(userId?: string) {
     }
   }
 
-  const persona = await spindle.personas.getActive()
+  let persona: any = null
+  let personaError = ''
+  try {
+    persona = await spindle.personas.getActive(userId)
+  } catch (err: any) {
+    personaError = err?.message || String(err)
+    spindle.log.error(`Persona Paths active persona lookup failed: ${personaError}`)
+  }
+
   spindle.sendToFrontend({
     type: 'state',
     config,
     connections,
     generationGranted,
     connectionError,
+    personaError,
     activePersona: persona ? { id: persona.id, name: persona.name, title: persona.title || '' } : null,
   }, userId)
 }
@@ -527,7 +539,12 @@ spindle.on('MESSAGE_SWIPED', (payload: any, userId?: string) => {
 })
 
 spindle.permissions.onChanged(({ permission }) => {
-  if (permission === 'generation') void sendState()
+  // Permission-change callbacks do not carry a userId. For an operator-scoped
+  // extension, do not call user-scoped APIs from here. The panel's Refresh
+  // button/get_state request provides the frontend user's scope safely.
+  if (permission === 'generation') {
+    spindle.log.info('Persona Paths generation permission changed; refresh the panel to reload connections.')
+  }
 })
 
 void loadState().then(() => {
