@@ -10,6 +10,7 @@ const DEFAULT_CONFIG = {
     tense: 'auto',
     detail: 'normal',
     generationDelaySeconds: 3,
+    skipOoc: true,
     adultContent: 'match_scene',
     temperature: 0.85,
     maxTokens: 1400,
@@ -38,6 +39,7 @@ function normalizeConfig(input) {
     next.temperature = clampNumber(next.temperature, 0, 2, DEFAULT_CONFIG.temperature);
     next.maxTokens = Math.round(clampNumber(next.maxTokens, 500, 32000, DEFAULT_CONFIG.maxTokens));
     next.generationDelaySeconds = clampNumber(next.generationDelaySeconds, 0, 15, DEFAULT_CONFIG.generationDelaySeconds);
+    next.skipOoc = next.skipOoc !== false;
     if (!['auto', 'first', 'second', 'third'].includes(next.pov))
         next.pov = 'auto';
     if (!['auto', 'present', 'past'].includes(next.tense))
@@ -72,6 +74,34 @@ async function saveRelationshipMemory() {
         .slice(0, 150);
     relationshipMemory = Object.fromEntries(entries);
     await spindle.storage.setJson(MEMORY_PATH, relationshipMemory, { indent: 2 });
+}
+function startsWithOocMarker(text) {
+    const clean = String(text || '').trimStart();
+    // Common role-play conventions plus a forgiving `[ooc}:` variant. The marker
+    // must be at the beginning so ordinary prose that merely mentions OOC is not skipped.
+    return /^(?:\[\s*ooc\s*[\]\}]\s*:?\s*|\(\s*ooc\s*\)\s*:?\s*|ooc\s*:)/i.test(clean);
+}
+function collectOocMessageIds(messages) {
+    const ids = new Set();
+    let waitingForAssistantReply = false;
+    for (const message of messages || []) {
+        const role = String(message?.role || '');
+        const id = String(message?.id || '');
+        if (role === 'user') {
+            const isOoc = startsWithOocMarker(String(message?.content || ''));
+            waitingForAssistantReply = isOoc;
+            if (isOoc && id)
+                ids.add(id);
+            continue;
+        }
+        if (role === 'assistant') {
+            const isOoc = waitingForAssistantReply || startsWithOocMarker(String(message?.content || ''));
+            if (isOoc && id)
+                ids.add(id);
+            waitingForAssistantReply = false;
+        }
+    }
+    return ids;
 }
 function hashText(text) {
     let hash = 5381;
@@ -414,6 +444,16 @@ async function handleAssistantMessage(chatId, messageId, force = false, userId) 
         const target = messages.find((m) => m.id === messageId);
         if (!target || target.role !== 'assistant')
             return;
+        const oocMessageIds = config.skipOoc ? collectOocMessageIds(messages) : new Set();
+        if (config.skipOoc && oocMessageIds.has(messageId)) {
+            if (cache[messageId]) {
+                delete cache[messageId];
+                await saveCache();
+            }
+            spindle.log.info(`Persona Paths skipped OOC exchange for ${messageId}.`);
+            spindle.sendToFrontend({ type: 'choices_skipped', chatId, messageId, reason: 'ooc' }, userId);
+            return;
+        }
         const contentHash = hashText(String(target.content || ''));
         const existing = cache[messageId];
         if (!force && existing && existing.contentHash === contentHash) {
@@ -430,7 +470,7 @@ async function handleAssistantMessage(chatId, messageId, force = false, userId) 
             : [];
         // Deliberately exclude system messages. Persona Paths observes the played story,
         // not preset/system instructions that may contain unrelated hidden context.
-        const storyMessages = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
+        const storyMessages = messages.filter((m) => (m.role === 'user' || m.role === 'assistant') && (!config.skipOoc || !oocMessageIds.has(String(m.id || ''))));
         const targetIndex = storyMessages.findIndex((m) => m.id === messageId);
         const throughTarget = targetIndex >= 0 ? storyMessages.slice(0, targetIndex + 1) : storyMessages;
         const sceneMessages = throughTarget.slice(-config.contextMessages);
@@ -544,10 +584,40 @@ spindle.onFrontendMessage(async (payload, userId) => {
         }
         if (payload.type === 'load_choices') {
             const ids = Array.isArray(payload.messageIds) ? payload.messageIds.map(String) : [String(payload.messageId || '')];
+            const grouped = new Map();
             for (const id of ids) {
-                if (id && cache[id])
-                    spindle.sendToFrontend({ type: 'choices_ready', data: cache[id] }, userId);
+                const entry = id ? cache[id] : null;
+                if (!entry)
+                    continue;
+                const list = grouped.get(entry.chatId) || [];
+                list.push(id);
+                grouped.set(entry.chatId, list);
             }
+            let cacheChanged = false;
+            for (const [chatId, messageIds] of grouped) {
+                let blocked = new Set();
+                if (config.skipOoc) {
+                    try {
+                        const messages = await spindle.chat.getMessages(chatId);
+                        blocked = collectOocMessageIds(messages);
+                    }
+                    catch (err) {
+                        spindle.log.warn(`Persona Paths could not verify OOC state while restoring cached choices: ${err?.message || String(err)}`);
+                    }
+                }
+                for (const id of messageIds) {
+                    if (config.skipOoc && blocked.has(id)) {
+                        delete cache[id];
+                        cacheChanged = true;
+                        spindle.sendToFrontend({ type: 'choices_skipped', chatId, messageId: id, reason: 'ooc' }, userId);
+                    }
+                    else if (cache[id]) {
+                        spindle.sendToFrontend({ type: 'choices_ready', data: cache[id] }, userId);
+                    }
+                }
+            }
+            if (cacheChanged)
+                await saveCache();
             return;
         }
         if (payload.type === 'ensure_choices') {

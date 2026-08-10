@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.10';
+const EXT_VERSION = '0.1.11';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -188,6 +188,22 @@ export function setup(ctx) {
         });
         cards.set(messageId, wrapper);
         return wrapper;
+    }
+    function removeCard(messageId) {
+        const existing = cards.get(messageId);
+        if (existing) {
+            try {
+                ctx.dom.uninject(existing);
+            }
+            catch {
+                try {
+                    existing.remove();
+                }
+                catch { }
+            }
+        }
+        cards.delete(messageId);
+        dataByMessage.delete(messageId);
     }
     function renderLoading(messageId, chatId) {
         const card = ensureCard(messageId, chatId);
@@ -389,6 +405,14 @@ export function setup(ctx) {
     enabledLabel.append(enabled, document.createTextNode('Generate choices after character replies'));
     enabled.addEventListener('change', () => scheduleSave({ enabled: enabled.checked }, 0));
     settings.appendChild(enabledLabel);
+    const skipOoc = ctx.dom.createElement('input', { type: 'checkbox' });
+    const skipOocLabel = ctx.dom.createElement('label', { class: 'pp-check' });
+    skipOocLabel.append(skipOoc, document.createTextNode('Skip OOC exchanges'));
+    skipOoc.addEventListener('change', () => scheduleSave({ skipOoc: skipOoc.checked }, 0));
+    settings.appendChild(skipOocLabel);
+    const skipOocHint = ctx.dom.createElement('div', { class: 'pp-hint' });
+    skipOocHint.textContent = 'Ignores [OOC], [OOC]:, [ooc}:, (OOC):, and OOC: turns. The assistant reply to an OOC user message is skipped too, even if it does not repeat the marker. OOC exchanges are also excluded from scene context and portrayal examples.';
+    settings.appendChild(skipOocHint);
     const manualRun = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn pp-primary' });
     manualRun.textContent = 'Generate Paths for latest reply';
     const manualStatus = ctx.dom.createElement('div', { class: 'pp-manual-status' });
@@ -546,6 +570,7 @@ export function setup(ctx) {
         currentState = state;
         const cfg = state?.config || {};
         enabled.checked = !!cfg.enabled;
+        skipOoc.checked = cfg.skipOoc !== false;
         pov.value = cfg.pov || 'auto';
         tense.value = cfg.tense || 'auto';
         detail.value = cfg.detail || 'normal';
@@ -612,6 +637,20 @@ export function setup(ctx) {
                 manualRun.textContent = 'Generate Paths for latest reply';
                 manualStatus.classList.remove('error');
                 manualStatus.textContent = 'Fresh choices generated for the latest assistant reply.';
+            }
+        }
+        else if (payload.type === 'choices_skipped') {
+            const messageId = String(payload.messageId || '');
+            if (messageId)
+                removeCard(messageId);
+            if (manualPending) {
+                manualPending = false;
+                manualRun.disabled = false;
+                manualRun.textContent = 'Generate Paths for latest reply';
+                manualStatus.classList.remove('error');
+                manualStatus.textContent = payload.reason === 'ooc'
+                    ? 'Skipped: the latest assistant reply is part of an OOC exchange.'
+                    : 'Persona Paths skipped this reply.';
             }
         }
         else if (payload.type === 'choices_error') {

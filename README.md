@@ -1,6 +1,6 @@
 # Persona Paths
 
-Version 0.1.9
+Version 0.1.11
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -50,6 +50,7 @@ Persona Paths requests only:
 
 - `generation`
 - `personas`
+- `chats` — resolves the active chat for manual generation
 - `chat_mutation`
 - `ui_panels` — only for Lumiverse's native draggable floating launcher
 
@@ -97,3 +98,14 @@ CYOA generation is now triggered by the browser-side `GENERATION_ENDED` event an
 Persona Paths now has a first-class **Generate Paths for latest reply** action in the drawer and in Lumiverse's chat-input Extras menu. Manual runs resolve the user's currently active chat, find its latest non-empty assistant reply, and force a fresh Persona Paths generation even if automatic generation is disabled or the browser/app was refreshed and the old Retry card disappeared.
 
 Manual generation requires Lumiverse's `chats` permission in addition to the existing `chat_mutation` permission: `chats` is used only to resolve the currently active chat; `chat_mutation` reads its messages. Choices remain extension-private and are never injected into the story prompt.
+
+
+## v0.1.11 — OOC guard
+
+- Adds **Skip OOC exchanges** (enabled by default).
+- Recognizes common leading markers including `[OOC]`, `[OOC]:`, `[ooc}:`, `(OOC):`, and `OOC:`.
+- If a user message is OOC, its paired assistant reply is also treated as OOC even when the assistant does not repeat the marker.
+- Persona Paths does not generate choices for OOC assistant replies.
+- OOC user/assistant turns are excluded from Persona Paths scene context and user-portrayal examples, so meta discussion cannot distort characterization.
+- OOC turns never update Persona Paths relationship memory because no CYOA generation runs for them.
+- Manual generation respects the same guard and reports that the latest reply was skipped.
