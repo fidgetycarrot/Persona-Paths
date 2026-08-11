@@ -12,6 +12,7 @@ const DEFAULT_CONFIG = {
     generationDelaySeconds: 3,
     skipOoc: true,
     adultContent: 'match_scene',
+    prismIntegration: 'auto',
     temperature: 0.85,
     maxTokens: 1400,
     connectionId: '',
@@ -48,6 +49,8 @@ function normalizeConfig(input) {
         next.detail = 'normal';
     if (!['match_scene', 'allow_explicit', 'suggestive'].includes(next.adultContent))
         next.adultContent = 'match_scene';
+    if (!['auto', 'off'].includes(next.prismIntegration))
+        next.prismIntegration = 'auto';
     if (!next.personaOverrides || typeof next.personaOverrides !== 'object')
         next.personaOverrides = {};
     next.globalInstructions = String(next.globalInstructions || '');
@@ -59,6 +62,22 @@ async function loadState() {
     config = normalizeConfig(await spindle.storage.getJson(CONFIG_PATH, { fallback: DEFAULT_CONFIG }));
     cache = await spindle.storage.getJson(CACHE_PATH, { fallback: {} });
     relationshipMemory = await spindle.storage.getJson(MEMORY_PATH, { fallback: {} });
+    // v0.1.12 migration: old cached paths may contain model-copied Prism <font>
+    // markup. Remove it once on load so an update/refresh cannot resurrect it.
+    let cacheChanged = false;
+    for (const entry of Object.values(cache || {})) {
+        if (!entry || !Array.isArray(entry.choices))
+            continue;
+        entry.choices = entry.choices.map((choice) => {
+            const before = String(choice?.text || '');
+            const after = cleanRoleplayText(before);
+            if (after !== before.trim())
+                cacheChanged = true;
+            return { ...choice, text: after };
+        });
+    }
+    if (cacheChanged)
+        await saveCache();
 }
 async function saveConfig() {
     await spindle.storage.setJson(CONFIG_PATH, config, { indent: 2 });
@@ -114,6 +133,91 @@ function compactText(text, max = 3600) {
     if (clean.length <= max)
         return clean;
     return clean.slice(0, max) + '\n[…truncated…]';
+}
+function normalizeHex(value) {
+    const raw = String(value || '').trim();
+    const short = raw.match(/^#?([0-9a-f]{3})$/i);
+    if (short)
+        return `#${short[1].split('').map((c) => c + c).join('').toUpperCase()}`;
+    const full = raw.match(/^#?([0-9a-f]{6})$/i);
+    return full ? `#${full[1].toUpperCase()}` : '';
+}
+// Prism intentionally stores portable color tags in some user/assistant messages.
+// They are presentation/speaker identity metadata, not characterization. Remove
+// them before the CYOA model sees examples so it cannot learn/copy stale or NPC colors.
+function stripColorMarkup(text) {
+    return String(text || '')
+        .replace(/&lt;\s*\/?\s*font\b[^&]*?&gt;/gi, '')
+        .replace(/\\?<\s*\/?\s*font\b[^>]*>/gi, '')
+        .replace(/\[\s*\/?\s*color(?:\s*=\s*[^\]]+)?\s*\]/gi, '');
+}
+function cleanRoleplayText(text) {
+    return stripColorMarkup(text).trim();
+}
+function parsePrismHexRows(text) {
+    const rows = [];
+    for (const line of String(text || '').split(/\r?\n/)) {
+        const match = line.match(/^\s*(.+?)\s*:\s*(#[0-9a-f]{6})(?:\s*\(provisional\))?\s*$/i);
+        if (!match)
+            continue;
+        const name = String(match[1] || '').trim();
+        const color = normalizeHex(match[2]);
+        if (!name || !color)
+            continue;
+        rows.push({ name, color, provisional: /\(provisional\)\s*$/i.test(line) });
+    }
+    return rows;
+}
+async function resolvePrismInfo(chatId, userId, persona, messages) {
+    if (config.prismIntegration !== 'auto') {
+        return { mode: 'off', available: false, color: '', source: '', status: 'Prism integration is off.' };
+    }
+    let macroAvailable = false;
+    let macroStatus = '';
+    try {
+        const resolved = await spindle.macros.resolve('{{prismHexes}}', { chatId, userId, commit: false });
+        const text = String(resolved?.text || '');
+        const diagnostics = Array.isArray(resolved?.diagnostics) ? resolved.diagnostics : [];
+        const unknown = diagnostics.some((d) => /unknown.*prismhexes|prismhexes.*unknown/i.test(String(d?.message || '')))
+            || text.includes('{{prismHexes}}');
+        macroAvailable = !unknown;
+        const rows = parsePrismHexRows(text);
+        const personaName = String(persona?.name || '').trim().toLocaleLowerCase();
+        if (personaName) {
+            const exact = rows.find((row) => row.name.trim().toLocaleLowerCase() === personaName && !row.provisional)
+                || rows.find((row) => row.name.trim().toLocaleLowerCase() === personaName);
+            if (exact) {
+                return {
+                    mode: 'auto', available: true, color: exact.color, source: 'Prism registry',
+                    status: `Prism: ${persona?.name || 'persona'} uses ${exact.color}.`,
+                };
+            }
+        }
+        if (macroAvailable)
+            macroStatus = rows.length ? 'Prism registry found, but the active persona is not exposed in it.' : 'Prism is available, but no persona color was exposed by its registry.';
+    }
+    catch (err) {
+        macroStatus = `Prism macro lookup unavailable: ${err?.message || String(err)}`;
+    }
+    // Prism writes the canonical persona color into metadata when it automatically
+    // colors a user-role message. This is a safer fallback than inspecting arbitrary
+    // <font> tags, which may belong to an NPC or be stale model output.
+    for (let i = (messages || []).length - 1; i >= 0; i -= 1) {
+        const message = messages[i];
+        if (message?.role !== 'user')
+            continue;
+        const color = normalizeHex(message?.metadata?.lumi_dialogue_color);
+        if (!color)
+            continue;
+        return {
+            mode: 'auto', available: true, color, source: 'Prism user-message metadata',
+            status: `Prism persona color detected from your latest colored turn: ${color}.`,
+        };
+    }
+    return {
+        mode: 'auto', available: macroAvailable, color: '', source: '',
+        status: macroStatus || 'Prism was not detected. Choices will use normal Lumiverse text color.',
+    };
 }
 function stripFences(text) {
     const trimmed = String(text || '').trim();
@@ -214,6 +318,7 @@ STYLE
 - ${requestedPov}
 - ${requestedTense}
 - Match the player's established voice, including bluntness, profanity, humor, tenderness, formality, or roughness when supported.
+- Do NOT emit HTML, <font> tags, BBCode color tags, CSS, or Prism color markup. Persona Paths handles presentation separately.
 - ADULT CONTENT: ${adultContentInstruction(cfg.adultContent)}
 - The choice text must be ready to paste directly into the user's composer. Do not put labels or explanations inside the pasted text.
 
@@ -241,9 +346,9 @@ function buildUserPrompt(args) {
         ? `NAME: ${persona.name || 'Unnamed'}\nTITLE: ${persona.title || ''}\nDESCRIPTION:\n${compactText(persona.description || '(none)', 6000)}`
         : 'No active persona card is available. Infer the player character only from USER turns.';
     const userExamples = recentUserTurns.length
-        ? recentUserTurns.map((m, i) => `USER EXAMPLE ${i + 1}:\n${compactText(m.content, 2600)}`).join('\n\n')
+        ? recentUserTurns.map((m, i) => `USER EXAMPLE ${i + 1}:\n${compactText(cleanRoleplayText(m.content), 2600)}`).join('\n\n')
         : '(none)';
-    const scene = sceneMessages.map((m) => `${m.role === 'user' ? 'USER' : 'ASSISTANT'}:\n${compactText(m.content, 3400)}`).join('\n\n');
+    const scene = sceneMessages.map((m) => `${m.role === 'user' ? 'USER' : 'ASSISTANT'}:\n${compactText(cleanRoleplayText(m.content), 3400)}`).join('\n\n');
     return `PLAYER PERSONA\n${personaBlock}
 
 PERSONA-SPECIFIC GUIDANCE FROM THE HUMAN\n${personaOverride.trim() || '(none)'}
@@ -365,6 +470,12 @@ async function generatePaths(args, userId) {
     catch (err) {
         parsed = null;
     }
+    if (parsed && Array.isArray(parsed.choices)) {
+        parsed.choices = parsed.choices.map((choice) => ({
+            ...choice,
+            text: cleanRoleplayText(choice?.text),
+        }));
+    }
     let issues = validateResult(parsed, config.choiceCount, config.detail);
     if (issues.length) {
         // Do not round-trip the failed model output as an assistant message. Some
@@ -411,6 +522,12 @@ Generate the answer again from scratch. Return one corrected JSON object only. P
         catch (err) {
             throw new Error(`CYOA repair response was not valid JSON${response?.finish_reason ? ` (finish reason: ${response.finish_reason})` : ''}.`);
         }
+        if (parsed && Array.isArray(parsed.choices)) {
+            parsed.choices = parsed.choices.map((choice) => ({
+                ...choice,
+                text: cleanRoleplayText(choice?.text),
+            }));
+        }
         issues = validateResult(parsed, config.choiceCount, config.detail);
     }
     if (issues.length)
@@ -418,7 +535,7 @@ Generate the answer again from scratch. Return one corrected JSON object only. P
     parsed.choices = parsed.choices.map((choice) => ({
         intent: String(choice.intent || '').trim(),
         title: String(choice.title || '').trim(),
-        text: String(choice.text || '').trim(),
+        text: cleanRoleplayText(choice.text),
     }));
     parsed.relationship_updates = Array.isArray(parsed.relationship_updates)
         ? parsed.relationship_updates.map((item) => ({
@@ -475,6 +592,7 @@ async function handleAssistantMessage(chatId, messageId, force = false, userId) 
         const throughTarget = targetIndex >= 0 ? storyMessages.slice(0, targetIndex + 1) : storyMessages;
         const sceneMessages = throughTarget.slice(-config.contextMessages);
         const recentUserTurns = throughTarget.filter((m) => m.role === 'user').slice(-config.recentUserExamples);
+        const prismInfo = await resolvePrismInfo(chatId, userId, persona, throughTarget);
         const result = await generatePaths({
             persona,
             personaOverride: persona?.id ? (config.personaOverrides[persona.id] || '') : '',
@@ -488,6 +606,7 @@ async function handleAssistantMessage(chatId, messageId, force = false, userId) 
             contentHash,
             style: result.style,
             choices: result.choices,
+            prismColor: prismInfo.color || undefined,
             createdAt: Date.now(),
         };
         cache[messageId] = entry;
@@ -549,6 +668,19 @@ async function sendState(userId) {
         personaError = err?.message || String(err);
         spindle.log.error(`Persona Paths active persona lookup failed: ${personaError}`);
     }
+    let prismInfo = { mode: config.prismIntegration, available: false, color: '', source: '', status: config.prismIntegration === 'off' ? 'Prism integration is off.' : 'Open a chat to detect Prism.' };
+    if (config.prismIntegration === 'auto' && persona && spindle.permissions.has('chats')) {
+        try {
+            const activeChat = await spindle.chats.getActive(userId);
+            if (activeChat?.id) {
+                const activeMessages = await spindle.chat.getMessages(activeChat.id);
+                prismInfo = await resolvePrismInfo(String(activeChat.id), userId, persona, activeMessages);
+            }
+        }
+        catch (err) {
+            prismInfo = { mode: 'auto', available: false, color: '', source: '', status: `Prism detection unavailable: ${err?.message || String(err)}` };
+        }
+    }
     spindle.sendToFrontend({
         type: 'state',
         config,
@@ -556,6 +688,7 @@ async function sendState(userId) {
         generationGranted,
         connectionError,
         personaError,
+        prismInfo,
         activePersona: persona ? { id: persona.id, name: persona.name, title: persona.title || '' } : null,
     }, userId);
 }

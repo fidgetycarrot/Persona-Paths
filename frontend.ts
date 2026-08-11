@@ -1,6 +1,6 @@
 type Ctx = any
 
-const EXT_VERSION = '0.1.11'
+const EXT_VERSION = '0.1.12'
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`
 
 type Choice = { intent: string; title: string; text: string }
@@ -9,6 +9,7 @@ type CachedPath = {
   messageId: string
   style: { pov: string; tense: string }
   choices: Choice[]
+  prismColor?: string
 }
 
 function createLabeledField(ctx: Ctx, label: string, control: HTMLElement, hint?: string) {
@@ -65,6 +66,32 @@ function titleCaseStyle(style: any) {
   const pov = style?.pov === 'second' ? '2nd' : style?.pov === 'third' ? '3rd' : '1st'
   const tense = style?.tense === 'past' ? 'Past' : 'Present'
   return `${pov} · ${tense}`
+}
+
+function renderChoiceText(body: HTMLElement, text: string, prismColor?: string) {
+  body.textContent = ''
+  const source = String(text || '')
+  const color = /^#[0-9A-F]{6}$/i.test(String(prismColor || '')) ? String(prismColor) : ''
+  if (!color) {
+    body.textContent = source
+    return
+  }
+
+  // Color only visibly quoted speech. The underlying choice remains plain text,
+  // so clicking it never pastes Prism/HTML markup into Lumiverse's composer.
+  const pattern = /(?:“[^”\n]+?”|"[^"\n]+?")/g
+  let cursor = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(source))) {
+    if (match.index > cursor) body.appendChild(document.createTextNode(source.slice(cursor, match.index)))
+    const dialogue = document.createElement('span')
+    dialogue.textContent = match[0]
+    dialogue.style.color = color
+    body.appendChild(dialogue)
+    cursor = match.index + match[0].length
+  }
+  if (cursor < source.length) body.appendChild(document.createTextNode(source.slice(cursor)))
+  if (!body.childNodes.length) body.textContent = source
 }
 
 export function setup(ctx: Ctx) {
@@ -150,6 +177,7 @@ export function setup(ctx: Ctx) {
     .pp-persona-badge { font-size:11px; color:var(--lumiverse-text-muted); padding:7px 9px; background:var(--lumiverse-fill-subtle); border-radius:9px; }
     .pp-connection-status { font-size:10.5px; line-height:1.35; color:var(--lumiverse-text-muted); margin-top:-7px; }
     .pp-connection-status.error { color:var(--lumiverse-danger, #d97777); }
+    .pp-prism-status { font-size:10.5px; line-height:1.35; color:var(--lumiverse-text-muted); margin-top:-7px; }
     .pp-divider { height:1px; background:var(--lumiverse-border); opacity:.7; }
     .pp-launcher {
       width:100%; height:100%; display:flex; align-items:center; justify-content:center; gap:7px; box-sizing:border-box;
@@ -262,7 +290,7 @@ export function setup(ctx: Ctx) {
       title.textContent = choice.title || choice.intent || `Option ${index + 1}`
       top.append(num, title)
       const body = ctx.dom.createElement('span', { class: 'pp-choice-text' }) as HTMLElement
-      body.textContent = choice.text
+      renderChoiceText(body, choice.text, data.prismColor)
       button.append(top, body)
       button.addEventListener('click', async () => {
         const filled = await fillComposer(choice.text)
@@ -523,11 +551,21 @@ export function setup(ctx: Ctx) {
   })
   adultContent.addEventListener('change', () => scheduleSave({ adultContent: adultContent.value }, 0))
 
+  const prismIntegration = ctx.dom.createElement('select') as HTMLSelectElement
+  ;[['auto','Auto'],['off','Off']].forEach(([v,l]) => {
+    const o = document.createElement('option'); o.value=v; o.textContent=l; prismIntegration.appendChild(o)
+  })
+  prismIntegration.addEventListener('change', () => scheduleSave({ prismIntegration: prismIntegration.value }, 0))
+
   behaviorGrid.append(
     createLabeledField(ctx, 'Choice generation delay', generationDelay, 'Waits until the assistant message has rendered, then gives Lumiverse this extra settling time.'),
     createLabeledField(ctx, 'Adult-content handling', adultContent, 'Match scene keeps the current explicitness. Allow explicit permits explicit adult choices when contextually appropriate; it does not force escalation.'),
+    createLabeledField(ctx, 'Prism integration', prismIntegration, 'Auto paints quoted dialogue in Path cards with Prism’s active persona color. Color markup is always stripped before the CYOA model sees the story.'),
   )
   settings.appendChild(behaviorGrid)
+  const prismStatus = ctx.dom.createElement('div', { class: 'pp-prism-status' }) as HTMLElement
+  prismStatus.textContent = 'Checking Prism…'
+  settings.appendChild(prismStatus)
 
   const grid2 = ctx.dom.createElement('div', { class: 'pp-grid' }) as HTMLElement
   const contextMessages = ctx.dom.createElement('input', { type: 'number', min: '6', max: '30', step: '1' }) as HTMLInputElement
@@ -601,6 +639,7 @@ export function setup(ctx: Ctx) {
     detail.value = cfg.detail || 'normal'
     generationDelay.value = String(cfg.generationDelaySeconds ?? 3)
     adultContent.value = cfg.adultContent || 'match_scene'
+    prismIntegration.value = cfg.prismIntegration || 'auto'
     choiceCount.value = String(cfg.choiceCount ?? 4)
     contextMessages.value = String(cfg.contextMessages ?? 12)
     recentUserExamples.value = String(cfg.recentUserExamples ?? 6)
@@ -610,6 +649,7 @@ export function setup(ctx: Ctx) {
     globalInstructions.value = cfg.globalInstructions || ''
     temperature.value = String(cfg.temperature ?? 0.85)
     maxTokens.value = String(cfg.maxTokens ?? 1400)
+    prismStatus.textContent = String(state?.prismInfo?.status || (cfg.prismIntegration === 'off' ? 'Prism integration is off.' : 'Prism color unavailable.'))
 
     const conns = Array.isArray(state?.connections) ? state.connections : []
     const selectedConnection = cfg.connectionId && conns.some((c: any) => c.id === cfg.connectionId)

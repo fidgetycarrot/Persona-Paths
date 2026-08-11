@@ -1,6 +1,6 @@
 # Persona Paths
 
-Version 0.1.11
+Version 0.1.12
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -109,3 +109,13 @@ Manual generation requires Lumiverse's `chats` permission in addition to the exi
 - OOC user/assistant turns are excluded from Persona Paths scene context and user-portrayal examples, so meta discussion cannot distort characterization.
 - OOC turns never update Persona Paths relationship memory because no CYOA generation runs for them.
 - Manual generation respects the same guard and reports that the latest reply was skipped.
+
+## v0.1.12 — Prism-aware choices
+
+- Adds **Prism integration: Auto / Off**. Auto is the default.
+- Persona Paths strips portable `<font color>`, escaped font-color tags, and BBCode color tags from RP scene context and portrayal examples before sending them to the CYOA model. Formatting is treated as presentation metadata, not characterization.
+- The CYOA prompt explicitly forbids emitting Prism/HTML/BBCode color markup, and generated choice text is sanitized again before it is cached or placed into the composer.
+- In Auto mode, Persona Paths resolves Prism's `{{prismHexes}}` macro non-destructively and prefers an exact active-persona registry match when Prism exposes one.
+- If Prism does not expose the persona in its registry, Persona Paths falls back to Prism's canonical `lumi_dialogue_color` metadata from the latest colored USER turn. It deliberately does **not** guess a persona color by copying arbitrary `<font>` tags.
+- Only quoted dialogue in the Persona Paths choice cards is painted with the detected persona color. The underlying choice remains plain text, so clicking a choice inserts no HTML/color markup into Lumiverse's composer; Prism remains responsible for coloring the sent message.
+- Existing cached choices from older Persona Paths versions are sanitized on startup so stale model-copied color tags do not reappear after an update or refresh.
