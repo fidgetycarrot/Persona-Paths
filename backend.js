@@ -412,7 +412,7 @@ Return JSON only, with this exact shape:
 No markdown. No commentary.`;
 }
 function buildUserPrompt(args) {
-    const { persona, personaOverride, memoryNotes, recentUserTurns, sceneMessages, globalInstructions } = args;
+    const { persona, personaOverride, memoryNotes, recentUserTurns, sceneMessages, globalInstructions, regenerationGuidance = '', rejectedChoices = [] } = args;
     const personaBlock = persona
         ? `NAME: ${persona.name || 'Unnamed'}\nTITLE: ${persona.title || ''}\nDESCRIPTION:\n${compactText(persona.description || '(none)', 6000)}`
         : 'No active persona card is available. Infer the player character only from USER turns.';
@@ -420,6 +420,13 @@ function buildUserPrompt(args) {
         ? recentUserTurns.map((m, i) => `USER EXAMPLE ${i + 1}:\n${compactText(cleanRoleplayText(m.content), 2600)}`).join('\n\n')
         : '(none)';
     const scene = sceneMessages.map((m) => `${m.role === 'user' ? 'USER' : 'ASSISTANT'}:\n${compactText(cleanRoleplayText(m.content), 3400)}`).join('\n\n');
+    const guidance = String(regenerationGuidance || '').trim();
+    const rejectedBlock = rejectedChoices.length
+        ? rejectedChoices.slice(0, 8).map((choice, i) => `REJECTED PATH ${i + 1} — ${choice.title || choice.intent || 'Untitled'}:\n${compactText(cleanRoleplayText(choice.text), 1800)}`).join('\n\n')
+        : '(none)';
+    const regenerationBlock = guidance
+        ? `\n\nGUIDED REGENERATION REQUEST FROM THE HUMAN\n${guidance}\n\nPREVIOUS PATHS THE HUMAN REJECTED\n${rejectedBlock}\n\nUse the guidance as a directional preference, correction, or possibility — not as a requirement that every new option perform the exact same action. Produce genuinely new trajectories rather than paraphrasing the rejected paths. If the guidance corrects characterization, naming, relationship behavior, or voice, obey that correction throughout all choices.`
+        : '';
     return `PLAYER PERSONA\n${personaBlock}
 
 PERSONA-SPECIFIC GUIDANCE FROM THE HUMAN\n${personaOverride.trim() || '(none)'}
@@ -430,7 +437,7 @@ PRIVATE RELATIONSHIP MEMORY FROM PRIOR CYOA PASSES\n${memoryNotes.length ? memor
 
 RECENT EXAMPLES OF HOW THE HUMAN ACTUALLY PLAYS THIS PERSONA\n${userExamples}
 
-CURRENT ROLE-PLAY SCENE\n${scene}
+CURRENT ROLE-PLAY SCENE\n${scene}${regenerationBlock}
 
 Generate the next-move choices for the USER now. Current scene evidence outranks stale notes.`;
 }
@@ -620,7 +627,7 @@ Generate the answer again from scratch. Return one corrected JSON object only. P
     };
     return parsed;
 }
-async function handleAssistantMessage(chatId, messageId, force = false, userId) {
+async function handleAssistantMessage(chatId, messageId, force = false, userId, regenerationGuidance = '', saveAsPersonaGuidance = false) {
     if (!config.enabled && !force)
         return;
     const key = `${chatId}:${messageId}`;
@@ -644,6 +651,9 @@ async function handleAssistantMessage(chatId, messageId, force = false, userId) 
         }
         const contentHash = hashText(String(target.content || ''));
         const existing = cache[messageId];
+        const rejectedChoices = force && String(regenerationGuidance || '').trim() && existing?.choices
+            ? existing.choices.map(choice => ({ ...choice }))
+            : [];
         if (!force && existing && existing.contentHash === contentHash) {
             spindle.sendToFrontend({ type: 'choices_ready', data: existing }, userId);
             return;
@@ -651,6 +661,28 @@ async function handleAssistantMessage(chatId, messageId, force = false, userId) 
         spindle.sendToFrontend({ type: 'choices_loading', chatId, messageId }, userId);
         const persona = await spindle.personas.getActive(userId);
         const personaId = persona?.id || 'no_persona';
+        const cleanGuidance = String(regenerationGuidance || '').trim();
+        if (saveAsPersonaGuidance && cleanGuidance) {
+            if (!persona?.id)
+                throw new Error('An active persona is required to save regeneration guidance.');
+            const previous = String(config.personaOverrides[persona.id] || '').trim();
+            const duplicate = previous
+                .split(/\n+/)
+                .map(line => line.replace(/^[-•]\s*/, '').trim().toLowerCase())
+                .filter(Boolean)
+                .includes(cleanGuidance.toLowerCase());
+            if (!duplicate) {
+                config.personaOverrides[persona.id] = previous ? `${previous}\n${cleanGuidance}` : cleanGuidance;
+                await saveConfig();
+            }
+            spindle.sendToFrontend({
+                type: 'persona_guidance_saved',
+                personaId: persona.id,
+                messageId,
+                text: config.personaOverrides[persona.id] || '',
+            }, userId);
+        }
+        const personaOverride = persona?.id ? (config.personaOverrides[persona.id] || '') : '';
         const memoryKey = `${chatId}::${personaId}`;
         const storedMemory = relationshipMemory[memoryKey];
         const memoryNotes = config.relationshipMemory && storedMemory
@@ -666,10 +698,12 @@ async function handleAssistantMessage(chatId, messageId, force = false, userId) 
         const prismInfo = await resolvePrismInfo(chatId, userId, persona, throughTarget);
         const result = await generatePaths({
             persona,
-            personaOverride: persona?.id ? (config.personaOverrides[persona.id] || '') : '',
+            personaOverride,
             memoryNotes,
             recentUserTurns,
             sceneMessages,
+            regenerationGuidance: cleanGuidance,
+            rejectedChoices,
         }, userId);
         const entry = {
             chatId,
@@ -854,6 +888,18 @@ spindle.onFrontendMessage(async (payload, userId) => {
             const messageId = String(payload.messageId || '');
             if (chatId && messageId)
                 await handleAssistantMessage(chatId, messageId, true, userId);
+            return;
+        }
+        if (payload.type === 'regenerate_with_guidance') {
+            const chatId = String(payload.chatId || '');
+            const messageId = String(payload.messageId || '');
+            const guidance = String(payload.guidance || '').trim();
+            const saveAsPersonaGuidance = !!payload.saveAsPersonaGuidance;
+            if (!chatId || !messageId)
+                throw new Error('A chat and assistant reply are required for guided regeneration.');
+            if (!guidance)
+                throw new Error('Enter some guidance before regenerating Persona Paths.');
+            await handleAssistantMessage(chatId, messageId, true, userId, guidance, saveAsPersonaGuidance);
             return;
         }
         if (payload.type === 'manual_generate_latest') {

@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.14';
+const EXT_VERSION = '0.1.15';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -142,6 +142,22 @@ export function setup(ctx) {
     .pp-error { font-size:12px; color:var(--lumiverse-text-muted); padding:4px 2px; }
     .pp-toastish { font-size:10px; color:var(--lumiverse-text-muted); margin-left:4px; opacity:0; transition:opacity .15s; }
     .pp-toastish.show { opacity:1; }
+    .pp-guidance-panel {
+      margin-top:9px; padding:10px; border:1px solid var(--lumiverse-border); border-radius:11px;
+      background:color-mix(in srgb, var(--lumiverse-fill) 88%, transparent);
+    }
+    .pp-guidance-panel[hidden] { display:none !important; }
+    .pp-guidance-title { font-size:11.5px; font-weight:750; margin-bottom:6px; }
+    .pp-guidance-input {
+      width:100%; min-height:68px; resize:vertical; box-sizing:border-box; border:1px solid var(--lumiverse-border);
+      border-radius:9px; background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text);
+      padding:8px 9px; font:inherit; font-size:12px; line-height:1.4;
+    }
+    .pp-guidance-input:focus { outline:1px solid color-mix(in srgb, var(--lumiverse-accent, currentColor) 62%, transparent); }
+    .pp-guidance-save { display:flex; align-items:center; gap:7px; margin-top:8px; font-size:10.5px; color:var(--lumiverse-text-muted); cursor:pointer; }
+    .pp-guidance-save input { accent-color:var(--lumiverse-accent); }
+    .pp-guidance-actions { display:flex; justify-content:flex-end; gap:7px; margin-top:9px; }
+    .pp-guidance-hint { margin-top:7px; font-size:9.8px; line-height:1.35; color:var(--lumiverse-text-muted); opacity:.78; }
 
     .pp-settings { padding:14px; display:flex; flex-direction:column; gap:14px; color:var(--lumiverse-text); }
     .pp-settings h3 { margin:0; font-size:16px; }
@@ -210,19 +226,70 @@ export function setup(ctx) {
           <span class="pp-style"></span>
           <span class="pp-toastish">Added to composer</span>
           <span class="pp-spacer"></span>
-          <button type="button" class="pp-icon-btn" title="Regenerate choices" aria-label="Regenerate choices">↻</button>
+          <button type="button" class="pp-icon-btn pp-guide-btn" title="Regenerate with guidance" aria-label="Regenerate with guidance">✎</button>
+          <button type="button" class="pp-icon-btn pp-regen-btn" title="Regenerate choices" aria-label="Regenerate choices">↻</button>
         </div>
         <div class="pp-choices"></div>
+        <div class="pp-guidance-panel" hidden>
+          <div class="pp-guidance-title">Regenerate with guidance</div>
+          <textarea class="pp-guidance-input" placeholder="What direction were you thinking? e.g. Stop arguing and give me options where Rook physically leaves camp."></textarea>
+          <label class="pp-guidance-save"><input type="checkbox" class="pp-guidance-save-check"> Save this as active persona guidance</label>
+          <div class="pp-guidance-actions">
+            <button type="button" class="pp-btn pp-guidance-cancel">Cancel</button>
+            <button type="button" class="pp-btn pp-primary pp-guidance-generate">Generate new paths</button>
+          </div>
+          <div class="pp-guidance-hint">One-shot by default. Saving appends this correction to the active persona’s private Persona Paths guidance.</div>
+        </div>
       </section>
     `, 'beforeend');
-        const regen = wrapper.querySelector('.pp-icon-btn');
+        const regen = wrapper.querySelector('.pp-regen-btn');
+        const guide = wrapper.querySelector('.pp-guide-btn');
+        const guidancePanel = wrapper.querySelector('.pp-guidance-panel');
+        const guidanceInput = wrapper.querySelector('.pp-guidance-input');
+        const guidanceSave = wrapper.querySelector('.pp-guidance-save-check');
+        const guidanceCancel = wrapper.querySelector('.pp-guidance-cancel');
+        const guidanceGenerate = wrapper.querySelector('.pp-guidance-generate');
         regen?.addEventListener('click', () => {
             const data = dataByMessage.get(messageId);
             const resolvedChatId = data?.chatId || chatId;
             if (!resolvedChatId)
                 return;
+            if (guidancePanel)
+                guidancePanel.hidden = true;
             renderLoading(messageId, resolvedChatId);
             ctx.sendToBackend({ type: 'regenerate', chatId: resolvedChatId, messageId });
+        });
+        guide?.addEventListener('click', () => {
+            if (!guidancePanel)
+                return;
+            guidancePanel.hidden = !guidancePanel.hidden;
+            if (!guidancePanel.hidden)
+                window.setTimeout(() => guidanceInput?.focus(), 0);
+        });
+        guidanceCancel?.addEventListener('click', () => {
+            if (guidancePanel)
+                guidancePanel.hidden = true;
+        });
+        guidanceGenerate?.addEventListener('click', () => {
+            const guidance = String(guidanceInput?.value || '').trim();
+            if (!guidance) {
+                guidanceInput?.focus();
+                return;
+            }
+            const data = dataByMessage.get(messageId);
+            const resolvedChatId = data?.chatId || chatId;
+            if (!resolvedChatId)
+                return;
+            if (guidancePanel)
+                guidancePanel.hidden = true;
+            renderLoading(messageId, resolvedChatId);
+            ctx.sendToBackend({
+                type: 'regenerate_with_guidance',
+                chatId: resolvedChatId,
+                messageId,
+                guidance,
+                saveAsPersonaGuidance: !!guidanceSave?.checked,
+            });
         });
         cards.set(messageId, wrapper);
         return wrapper;
@@ -749,6 +816,24 @@ export function setup(ctx) {
                 manualRun.textContent = 'Generate Paths for latest reply';
                 manualStatus.classList.add('error');
                 manualStatus.textContent = String(payload.error || 'Manual Persona Paths generation failed.');
+            }
+        }
+        else if (payload.type === 'persona_guidance_saved') {
+            const personaId = String(payload.personaId || '');
+            const text = String(payload.text || '');
+            if (personaId) {
+                if (currentState?.config?.personaOverrides)
+                    currentState.config.personaOverrides[personaId] = text;
+                if (currentState?.activePersona?.id === personaId)
+                    personaInstructions.value = text;
+            }
+            const messageId = String(payload.messageId || '');
+            const card = messageId ? cards.get(messageId) : null;
+            const hint = card?.querySelector('.pp-toastish');
+            if (hint) {
+                hint.textContent = 'Saved to persona guidance';
+                hint.classList.add('show');
+                window.setTimeout(() => hint.classList.remove('show'), 1800);
             }
         }
         else if (payload.type === 'memory_cleared') {

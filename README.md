@@ -1,6 +1,6 @@
 # Persona Paths
 
-Version 0.1.14
+Version 0.1.15
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -128,3 +128,13 @@ Manual generation requires Lumiverse's `chats` permission in addition to the exi
 - Manual color overrides historical Prism metadata/markup, so stale colors cannot outvote the user's explicit selection.
 - Existing cached choices repaint with the current resolved/manual Prism color instead of letting an old cached color win.
 - Choice text and composer insertion remain plain text; Prism still owns formatting of the actual sent message.
+
+
+## v0.1.15 — guided regeneration
+
+- Adds **Regenerate with guidance** (✎) to every Persona Paths card.
+- Guidance is one-shot by default and applies only to that regeneration.
+- The rejected paths are included as reference so the model is told to produce genuinely new trajectories rather than paraphrasing them.
+- Optional **Save this as active persona guidance** appends the correction to that persona's private Persona Paths guidance.
+- Saved guidance is per persona and immediately updates the existing Active persona guidance field.
+- Useful for persistent corrections such as `Never call Sovi “Price”; use Sovi's established name.` while leaving situational steering unsaved.
