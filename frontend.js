@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.13';
+const EXT_VERSION = '0.1.14';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -301,7 +301,7 @@ export function setup(ctx) {
             title.textContent = choice.title || choice.intent || `Option ${index + 1}`;
             top.append(num, title);
             const body = ctx.dom.createElement('span', { class: 'pp-choice-text' });
-            renderChoiceText(body, choice.text, data.prismColor || currentState?.prismInfo?.color);
+            renderChoiceText(body, choice.text, currentState?.prismInfo?.color || data.prismColor);
             button.append(top, body);
             button.addEventListener('click', async () => {
                 const filled = await fillComposer(choice.text);
@@ -554,14 +554,27 @@ export function setup(ctx) {
     });
     adultContent.addEventListener('change', () => scheduleSave({ adultContent: adultContent.value }, 0));
     const prismIntegration = ctx.dom.createElement('select');
-    [['auto', 'Auto'], ['off', 'Off']].forEach(([v, l]) => {
+    [['auto', 'Auto'], ['manual', 'Manual'], ['off', 'Off']].forEach(([v, l]) => {
         const o = document.createElement('option');
         o.value = v;
         o.textContent = l;
         prismIntegration.appendChild(o);
     });
-    prismIntegration.addEventListener('change', () => scheduleSave({ prismIntegration: prismIntegration.value }, 0));
-    behaviorGrid.append(createLabeledField(ctx, 'Choice generation delay', generationDelay, 'Waits until the assistant message has rendered, then gives Lumiverse this extra settling time.'), createLabeledField(ctx, 'Adult-content handling', adultContent, 'Match scene keeps the current explicitness. Allow explicit permits explicit adult choices when contextually appropriate; it does not force escalation.'), createLabeledField(ctx, 'Prism integration', prismIntegration, 'Auto paints quoted dialogue in Path cards with Prism’s active persona color. Color markup is always stripped before the CYOA model sees the story.'));
+    prismIntegration.addEventListener('change', () => {
+        prismColorInput.disabled = prismIntegration.value !== 'manual' || !currentState?.activePersona?.id;
+        scheduleSave({ prismIntegration: prismIntegration.value }, 0);
+    });
+    const prismColorInput = ctx.dom.createElement('input', { type: 'text', placeholder: '#B6E472', maxlength: '7', spellcheck: 'false' });
+    let prismColorTimer = null;
+    prismColorInput.addEventListener('input', () => {
+        const personaId = currentState?.activePersona?.id;
+        if (!personaId || prismIntegration.value !== 'manual')
+            return;
+        if (prismColorTimer)
+            clearTimeout(prismColorTimer);
+        prismColorTimer = setTimeout(() => ctx.sendToBackend({ type: 'set_prism_color_override', personaId, color: prismColorInput.value }), 220);
+    });
+    behaviorGrid.append(createLabeledField(ctx, 'Choice generation delay', generationDelay, 'Waits until the assistant message has rendered, then gives Lumiverse this extra settling time.'), createLabeledField(ctx, 'Adult-content handling', adultContent, 'Match scene keeps the current explicitness. Allow explicit permits explicit adult choices when contextually appropriate; it does not force escalation.'), createLabeledField(ctx, 'Prism integration', prismIntegration, 'Auto detects Prism’s active persona color. Manual uses the color you set below. Color markup is always stripped before the CYOA model sees the story.'), createLabeledField(ctx, 'Manual Prism persona color', prismColorInput, 'Stored per active persona. Use #RRGGBB, for example #B6E472. Manual mode always wins over historical Prism evidence.'));
     settings.appendChild(behaviorGrid);
     const prismStatus = ctx.dom.createElement('div', { class: 'pp-prism-status' });
     prismStatus.textContent = 'Checking Prism…';
@@ -618,6 +631,7 @@ export function setup(ctx) {
     function applyState(state) {
         currentState = state;
         const cfg = state?.config || {};
+        const persona = state?.activePersona;
         enabled.checked = !!cfg.enabled;
         skipOoc.checked = cfg.skipOoc !== false;
         pov.value = cfg.pov || 'auto';
@@ -626,6 +640,8 @@ export function setup(ctx) {
         generationDelay.value = String(cfg.generationDelaySeconds ?? 3);
         adultContent.value = cfg.adultContent || 'match_scene';
         prismIntegration.value = cfg.prismIntegration || 'auto';
+        prismColorInput.value = persona?.id ? (cfg.prismColorOverrides?.[persona.id] || '') : '';
+        prismColorInput.disabled = prismIntegration.value !== 'manual' || !persona?.id;
         choiceCount.value = String(cfg.choiceCount ?? 4);
         contextMessages.value = String(cfg.contextMessages ?? 12);
         recentUserExamples.value = String(cfg.recentUserExamples ?? 6);
@@ -661,7 +677,6 @@ export function setup(ctx) {
             connectionStatus.classList.remove('error');
             connectionStatus.textContent = `${conns.length} Lumiverse LLM connection${conns.length === 1 ? '' : 's'} available.`;
         }
-        const persona = state?.activePersona;
         const personaError = String(state?.personaError || '');
         personaBadge.textContent = personaError
             ? `Active persona unavailable: ${personaError}`

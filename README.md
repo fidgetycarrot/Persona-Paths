@@ -1,6 +1,6 @@
 # Persona Paths
 
-Version 0.1.13
+Version 0.1.14
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -119,3 +119,12 @@ Manual generation requires Lumiverse's `chats` permission in addition to the exi
 - If Prism does not expose the persona in its registry, Persona Paths falls back to Prism's canonical `lumi_dialogue_color` metadata from the latest colored USER turn. It deliberately does **not** guess a persona color by copying arbitrary `<font>` tags.
 - Only quoted dialogue in the Persona Paths choice cards is painted with the detected persona color. The underlying choice remains plain text, so clicking a choice inserts no HTML/color markup into Lumiverse's composer; Prism remains responsible for coloring the sent message.
 - Existing cached choices from older Persona Paths versions are sanitized on startup so stale model-copied color tags do not reappear after an update or refresh.
+
+
+## v0.1.14 — manual Prism persona color
+
+- Adds **Prism integration: Auto / Manual / Off**.
+- Manual mode stores a `#RRGGBB` color per active persona and makes that value authoritative for Persona Paths card rendering.
+- Manual color overrides historical Prism metadata/markup, so stale colors cannot outvote the user's explicit selection.
+- Existing cached choices repaint with the current resolved/manual Prism color instead of letting an old cached color win.
+- Choice text and composer insertion remain plain text; Prism still owns formatting of the actual sent message.

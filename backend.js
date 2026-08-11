@@ -13,6 +13,7 @@ const DEFAULT_CONFIG = {
     skipOoc: true,
     adultContent: 'match_scene',
     prismIntegration: 'auto',
+    prismColorOverrides: {},
     temperature: 0.85,
     maxTokens: 1400,
     connectionId: '',
@@ -49,8 +50,11 @@ function normalizeConfig(input) {
         next.detail = 'normal';
     if (!['match_scene', 'allow_explicit', 'suggestive'].includes(next.adultContent))
         next.adultContent = 'match_scene';
-    if (!['auto', 'off'].includes(next.prismIntegration))
+    if (!['auto', 'manual', 'off'].includes(next.prismIntegration))
         next.prismIntegration = 'auto';
+    if (!next.prismColorOverrides || typeof next.prismColorOverrides !== 'object')
+        next.prismColorOverrides = {};
+    next.prismColorOverrides = Object.fromEntries(Object.entries(next.prismColorOverrides).map(([key, value]) => [key, normalizeHex(value)]).filter(([, value]) => !!value));
     if (!next.personaOverrides || typeof next.personaOverrides !== 'object')
         next.personaOverrides = {};
     next.globalInstructions = String(next.globalInstructions || '');
@@ -225,8 +229,22 @@ function parsePrismHexRows(text) {
     return rows;
 }
 async function resolvePrismInfo(chatId, userId, persona, messages) {
-    if (config.prismIntegration !== 'auto') {
+    if (config.prismIntegration === 'off') {
         return { mode: 'off', available: false, color: '', source: '', status: 'Prism integration is off.' };
+    }
+    if (config.prismIntegration === 'manual') {
+        const personaId = String(persona?.id || '');
+        const color = personaId ? normalizeHex(config.prismColorOverrides?.[personaId]) : '';
+        if (color) {
+            return {
+                mode: 'manual', available: true, color, source: 'Persona Paths manual override',
+                status: `Manual Prism persona color: ${color}.`,
+            };
+        }
+        return {
+            mode: 'manual', available: false, color: '', source: '',
+            status: personaId ? 'Manual Prism color is selected. Enter a valid #RRGGBB color for this persona.' : 'Manual Prism color is selected, but there is no active persona.',
+        };
     }
     // Prism does NOT expose the active persona in {{prismHexes}} by default
     // (personaInCast defaults false). Prefer the persona-specific evidence Prism
@@ -722,7 +740,10 @@ async function sendState(userId) {
         spindle.log.error(`Persona Paths active persona lookup failed: ${personaError}`);
     }
     let prismInfo = { mode: config.prismIntegration, available: false, color: '', source: '', status: config.prismIntegration === 'off' ? 'Prism integration is off.' : 'Open a chat to detect Prism.' };
-    if (config.prismIntegration === 'auto' && persona && spindle.permissions.has('chats')) {
+    if (persona && config.prismIntegration === 'manual') {
+        prismInfo = await resolvePrismInfo('', userId, persona, []);
+    }
+    else if (config.prismIntegration === 'auto' && persona && spindle.permissions.has('chats')) {
         try {
             const activeChat = await spindle.chats.getActive(userId);
             if (activeChat?.id) {
@@ -763,6 +784,19 @@ spindle.onFrontendMessage(async (payload, userId) => {
             const personaId = String(payload.personaId || '');
             if (personaId) {
                 config.personaOverrides[personaId] = String(payload.text || '');
+                await saveConfig();
+            }
+            await sendState(userId);
+            return;
+        }
+        if (payload.type === 'set_prism_color_override') {
+            const personaId = String(payload.personaId || '');
+            if (personaId) {
+                const color = normalizeHex(payload.color);
+                if (color)
+                    config.prismColorOverrides[personaId] = color;
+                else
+                    delete config.prismColorOverrides[personaId];
                 await saveConfig();
             }
             await sendState(userId);
