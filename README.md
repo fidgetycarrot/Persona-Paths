@@ -1,6 +1,6 @@
 # Persona Paths
 
-Version 0.1.12
+Version 0.1.13
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -110,7 +110,7 @@ Manual generation requires Lumiverse's `chats` permission in addition to the exi
 - OOC turns never update Persona Paths relationship memory because no CYOA generation runs for them.
 - Manual generation respects the same guard and reports that the latest reply was skipped.
 
-## v0.1.12 — Prism-aware choices
+## v0.1.13 — Prism-aware choices
 
 - Adds **Prism integration: Auto / Off**. Auto is the default.
 - Persona Paths strips portable `<font color>`, escaped font-color tags, and BBCode color tags from RP scene context and portrayal examples before sending them to the CYOA model. Formatting is treated as presentation metadata, not characterization.

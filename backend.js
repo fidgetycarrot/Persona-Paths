@@ -154,6 +154,62 @@ function stripColorMarkup(text) {
 function cleanRoleplayText(text) {
     return stripColorMarkup(text).trim();
 }
+function extractPrismColorsFromUserContent(text) {
+    const source = String(text || '');
+    const found = [];
+    const add = (value) => {
+        const color = normalizeHex(value);
+        if (color && !found.includes(color))
+            found.push(color);
+    };
+    // Prism's canonical stored form. We inspect USER messages only; assistant
+    // markup may belong to any NPC and is never trusted as the persona color.
+    for (const match of source.matchAll(/<font\b[^>]*\bcolor\s*=\s*["']?\s*(#?[0-9a-f]{6}|#?[0-9a-f]{3})\s*["']?[^>]*>/gi))
+        add(match[1]);
+    for (const match of source.matchAll(/&lt;\s*font\b[^&]*?\bcolor\s*=\s*(?:&quot;|&#39;|["'])?\s*(#?[0-9a-f]{6}|#?[0-9a-f]{3})/gi))
+        add(match[1]);
+    for (const match of source.matchAll(/\[\s*color\s*=\s*["']?\s*(#?[0-9a-f]{6}|#?[0-9a-f]{3})\s*["']?\s*\]/gi))
+        add(match[1]);
+    return found;
+}
+function inferPrismPersonaColorFromUserMessages(messages) {
+    // First choice: Prism's own metadata on a user message. Lumiverse exposes
+    // spindle_metadata separately as message.metadata.
+    for (let i = (messages || []).length - 1; i >= 0; i -= 1) {
+        const message = messages[i];
+        if (message?.role !== 'user')
+            continue;
+        const color = normalizeHex(message?.metadata?.lumi_dialogue_color)
+            || normalizeHex(message?.extra?.spindle_metadata?.lumi_dialogue_color);
+        if (color)
+            return { color, source: 'Prism user-message metadata' };
+    }
+    // Compatibility fallback: Prism may already have persisted canonical <font>
+    // markup while metadata is absent/stale. A USER turn represents the active
+    // persona, so a single unambiguous color in that turn is much safer than
+    // sampling arbitrary assistant markup. Require consistency and prefer recent
+    // evidence so old persona colors do not win after a palette change.
+    const votes = new Map();
+    let considered = 0;
+    for (let i = (messages || []).length - 1; i >= 0 && considered < 12; i -= 1) {
+        const message = messages[i];
+        if (message?.role !== 'user')
+            continue;
+        considered += 1;
+        const colors = extractPrismColorsFromUserContent(message?.content);
+        if (colors.length !== 1)
+            continue;
+        const color = colors[0];
+        const current = votes.get(color) || { count: 0, newestIndex: i };
+        current.count += 1;
+        current.newestIndex = Math.max(current.newestIndex, i);
+        votes.set(color, current);
+    }
+    const winner = [...votes.entries()].sort((a, b) => b[1].count - a[1].count || b[1].newestIndex - a[1].newestIndex)[0];
+    if (winner)
+        return { color: winner[0], source: 'Prism user-message markup' };
+    return { color: '', source: '' };
+}
 function parsePrismHexRows(text) {
     const rows = [];
     for (const line of String(text || '').split(/\r?\n/)) {
@@ -171,6 +227,16 @@ function parsePrismHexRows(text) {
 async function resolvePrismInfo(chatId, userId, persona, messages) {
     if (config.prismIntegration !== 'auto') {
         return { mode: 'off', available: false, color: '', source: '', status: 'Prism integration is off.' };
+    }
+    // Prism does NOT expose the active persona in {{prismHexes}} by default
+    // (personaInCast defaults false). Prefer the persona-specific evidence Prism
+    // writes onto USER turns, then use the registry when the persona is exposed.
+    const userEvidence = inferPrismPersonaColorFromUserMessages(messages);
+    if (userEvidence.color) {
+        return {
+            mode: 'auto', available: true, color: userEvidence.color, source: userEvidence.source,
+            status: `${userEvidence.source === 'Prism user-message metadata' ? 'Prism persona color' : 'Prism persona color inferred from your colored turns'}: ${userEvidence.color}.`,
+        };
     }
     let macroAvailable = false;
     let macroStatus = '';
@@ -194,25 +260,12 @@ async function resolvePrismInfo(chatId, userId, persona, messages) {
             }
         }
         if (macroAvailable)
-            macroStatus = rows.length ? 'Prism registry found, but the active persona is not exposed in it.' : 'Prism is available, but no persona color was exposed by its registry.';
+            macroStatus = rows.length
+                ? 'Prism registry found. The active persona is not exposed there, and no colored user-turn evidence was available yet.'
+                : 'Prism is available, but no persona color was exposed yet.';
     }
     catch (err) {
         macroStatus = `Prism macro lookup unavailable: ${err?.message || String(err)}`;
-    }
-    // Prism writes the canonical persona color into metadata when it automatically
-    // colors a user-role message. This is a safer fallback than inspecting arbitrary
-    // <font> tags, which may belong to an NPC or be stale model output.
-    for (let i = (messages || []).length - 1; i >= 0; i -= 1) {
-        const message = messages[i];
-        if (message?.role !== 'user')
-            continue;
-        const color = normalizeHex(message?.metadata?.lumi_dialogue_color);
-        if (!color)
-            continue;
-        return {
-            mode: 'auto', available: true, color, source: 'Prism user-message metadata',
-            status: `Prism persona color detected from your latest colored turn: ${color}.`,
-        };
     }
     return {
         mode: 'auto', available: macroAvailable, color: '', source: '',

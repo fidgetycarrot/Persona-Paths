@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.12';
+const EXT_VERSION = '0.1.13';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -58,24 +58,34 @@ function titleCaseStyle(style) {
 function renderChoiceText(body, text, prismColor) {
     body.textContent = '';
     const source = String(text || '');
-    const color = /^#[0-9A-F]{6}$/i.test(String(prismColor || '')) ? String(prismColor) : '';
+    const color = /^#[0-9A-F]{6}$/i.test(String(prismColor || '')) ? String(prismColor).toUpperCase() : '';
     if (!color) {
         body.textContent = source;
         return;
     }
-    // Color only visibly quoted speech. The underlying choice remains plain text,
-    // so clicking it never pastes Prism/HTML markup into Lumiverse's composer.
-    const pattern = /(?:“[^”\n]+?”|"[^"\n]+?")/g;
+    // Mirror Prism's quoted-dialogue rules closely. The underlying option remains
+    // plain text; only the rendered Path card gets presentation color.
+    const pattern = /“[^”\n]+”|(^|[\s([{>—–-])"[^"\n]+"(?=$|[\s)\]}>.,!?;:—–-])/gm;
     let cursor = 0;
     let match;
     while ((match = pattern.exec(source))) {
-        if (match.index > cursor)
-            body.appendChild(document.createTextNode(source.slice(cursor, match.index)));
+        let start = match.index;
+        let quoted = match[0];
+        // Straight-quote pattern may capture one leading boundary character. Keep
+        // that boundary uncolored and paint only the quoted dialogue itself.
+        if (match[1]) {
+            body.appendChild(document.createTextNode(source.slice(cursor, start + match[1].length)));
+            start += match[1].length;
+            quoted = quoted.slice(match[1].length);
+        }
+        else if (start > cursor) {
+            body.appendChild(document.createTextNode(source.slice(cursor, start)));
+        }
         const dialogue = document.createElement('span');
-        dialogue.textContent = match[0];
-        dialogue.style.color = color;
+        dialogue.textContent = quoted;
+        dialogue.style.setProperty('color', color, 'important');
         body.appendChild(dialogue);
-        cursor = match.index + match[0].length;
+        cursor = start + quoted.length;
     }
     if (cursor < source.length)
         body.appendChild(document.createTextNode(source.slice(cursor)));
@@ -291,7 +301,7 @@ export function setup(ctx) {
             title.textContent = choice.title || choice.intent || `Option ${index + 1}`;
             top.append(num, title);
             const body = ctx.dom.createElement('span', { class: 'pp-choice-text' });
-            renderChoiceText(body, choice.text, data.prismColor);
+            renderChoiceText(body, choice.text, data.prismColor || currentState?.prismInfo?.color);
             button.append(top, body);
             button.addEventListener('click', async () => {
                 const filled = await fillComposer(choice.text);
@@ -626,6 +636,10 @@ export function setup(ctx) {
         temperature.value = String(cfg.temperature ?? 0.85);
         maxTokens.value = String(cfg.maxTokens ?? 1400);
         prismStatus.textContent = String(state?.prismInfo?.status || (cfg.prismIntegration === 'off' ? 'Prism integration is off.' : 'Prism color unavailable.'));
+        if (state?.prismInfo?.color) {
+            for (const cached of dataByMessage.values())
+                renderChoices(cached);
+        }
         const conns = Array.isArray(state?.connections) ? state.connections : [];
         const selectedConnection = cfg.connectionId && conns.some((c) => c.id === cfg.connectionId)
             ? cfg.connectionId
