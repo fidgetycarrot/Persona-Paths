@@ -1,9 +1,9 @@
 type Ctx = any
 
-const EXT_VERSION = '0.1.15'
+const EXT_VERSION = '0.1.19'
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`
 
-type Choice = { intent: string; title: string; text: string }
+type Choice = { intent: string; title: string; text: string; advances_scene?: boolean }
 type CachedPath = {
   chatId: string
   messageId: string
@@ -68,17 +68,42 @@ function titleCaseStyle(style: any) {
   return `${pov} · ${tense}`
 }
 
+function appendRenderedText(parent: HTMLElement, text: string) {
+  const source = String(text || '')
+  // Render single-asterisk Markdown as italics for Path-card presentation while
+  // preserving the literal asterisks in the cached/pasted choice text.
+  // Deliberately ignore **double-asterisk** runs so we do not reinterpret bold.
+  const pattern = /(^|[^*])\*([^*\n]+?)\*(?!\*)/g
+  let cursor = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(source))) {
+    const fullStart = match.index
+    const boundary = match[1] || ''
+    const italicText = match[2] || ''
+    const italicStart = fullStart + boundary.length
+
+    if (italicStart > cursor) parent.appendChild(document.createTextNode(source.slice(cursor, italicStart)))
+    const em = document.createElement('em')
+    em.textContent = italicText
+    parent.appendChild(em)
+    cursor = pattern.lastIndex
+  }
+  if (cursor < source.length) parent.appendChild(document.createTextNode(source.slice(cursor)))
+  if (!source.length) parent.appendChild(document.createTextNode(''))
+}
+
 function renderChoiceText(body: HTMLElement, text: string, prismColor?: string) {
   body.textContent = ''
   const source = String(text || '')
   const color = /^#[0-9A-F]{6}$/i.test(String(prismColor || '')) ? String(prismColor).toUpperCase() : ''
   if (!color) {
-    body.textContent = source
+    appendRenderedText(body, source)
     return
   }
 
   // Mirror Prism's quoted-dialogue rules closely. The underlying option remains
-  // plain text; only the rendered Path card gets presentation color.
+  // plain text; only the rendered Path card gets presentation color. Narration
+  // segments still render *inner thoughts* as italics.
   const pattern = /“[^”\n]+”|(^|[\s([{>—–-])"[^"\n]+"(?=$|[\s)\]}>.,!?;:—–-])/gm
   let cursor = 0
   let match: RegExpExecArray | null
@@ -88,11 +113,11 @@ function renderChoiceText(body: HTMLElement, text: string, prismColor?: string) 
     // Straight-quote pattern may capture one leading boundary character. Keep
     // that boundary uncolored and paint only the quoted dialogue itself.
     if (match[1]) {
-      body.appendChild(document.createTextNode(source.slice(cursor, start + match[1].length)))
+      appendRenderedText(body, source.slice(cursor, start + match[1].length))
       start += match[1].length
       quoted = quoted.slice(match[1].length)
     } else if (start > cursor) {
-      body.appendChild(document.createTextNode(source.slice(cursor, start)))
+      appendRenderedText(body, source.slice(cursor, start))
     }
     const dialogue = document.createElement('span')
     dialogue.textContent = quoted
@@ -100,8 +125,8 @@ function renderChoiceText(body: HTMLElement, text: string, prismColor?: string) 
     body.appendChild(dialogue)
     cursor = start + quoted.length
   }
-  if (cursor < source.length) body.appendChild(document.createTextNode(source.slice(cursor)))
-  if (!body.childNodes.length) body.textContent = source
+  if (cursor < source.length) appendRenderedText(body, source.slice(cursor))
+  if (!body.childNodes.length) appendRenderedText(body, source)
 }
 
 export function setup(ctx: Ctx) {
@@ -115,7 +140,20 @@ export function setup(ctx: Ctx) {
   const renderFallbackTimers = new Map<string, { timer: any; chatId: string }>()
 
   const removeStyle = ctx.dom.addStyle(`
+    .pp-injection-root {
+      display:block !important;
+      width:100% !important;
+      max-width:100% !important;
+      min-width:0 !important;
+      box-sizing:border-box !important;
+      flex:0 0 auto !important;
+    }
     .pp-card {
+      width:100%;
+      max-width:100%;
+      min-width:0;
+      box-sizing:border-box;
+      overflow:hidden;
       margin: 12px 0 2px;
       padding: 10px;
       border: 1px solid var(--lumiverse-border);
@@ -123,7 +161,7 @@ export function setup(ctx: Ctx) {
       background: color-mix(in srgb, var(--lumiverse-fill-subtle) 88%, transparent);
       box-shadow: 0 5px 18px rgba(0,0,0,.12);
     }
-    .pp-head { display:flex; align-items:center; gap:8px; margin:0 2px 8px; min-height:26px; }
+    .pp-head { display:flex; align-items:center; gap:8px; margin:0 2px 8px; min-height:26px; min-width:0; max-width:100%; box-sizing:border-box; }
     .pp-brand { font-size:12px; font-weight:700; letter-spacing:.02em; color:var(--lumiverse-text-muted); }
     .pp-style { font-size:10px; color:var(--lumiverse-text-muted); opacity:.78; }
     .pp-spacer { flex:1; }
@@ -132,9 +170,9 @@ export function setup(ctx: Ctx) {
       border-radius:8px; width:28px; height:28px; font-size:17px; line-height:1;
     }
     .pp-icon-btn:hover { background:var(--lumiverse-fill); color:var(--lumiverse-text); }
-    .pp-choices { display:flex; flex-direction:column; gap:7px; }
+    .pp-choices { display:flex; flex-direction:column; gap:7px; min-width:0; max-width:100%; box-sizing:border-box; }
     .pp-choice {
-      width:100%; text-align:left; cursor:pointer; border:1px solid transparent;
+      width:100%; max-width:100%; min-width:0; box-sizing:border-box; text-align:left; cursor:pointer; border:1px solid transparent;
       border-radius:12px; padding:10px 12px;
       background:var(--lumiverse-fill);
       color:var(--lumiverse-text);
@@ -142,13 +180,14 @@ export function setup(ctx: Ctx) {
     }
     .pp-choice:hover { transform:translateY(-1px); border-color:var(--lumiverse-border); background:var(--lumiverse-fill-hover, var(--lumiverse-fill-subtle)); }
     .pp-choice:active { transform:translateY(0); }
-    .pp-choice-top { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+    .pp-choice-top { display:flex; align-items:center; gap:8px; margin-bottom:4px; min-width:0; max-width:100%; }
     .pp-num {
       width:20px; height:20px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center;
       font-size:10px; font-weight:800; background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text-muted); flex:0 0 auto;
     }
-    .pp-choice-title { font-size:12px; font-weight:700; }
-    .pp-choice-text { display:block; font-size:12.5px; line-height:1.45; color:var(--lumiverse-text-muted); white-space:pre-wrap; }
+    .pp-choice-title { font-size:12px; font-weight:700; min-width:0; overflow-wrap:anywhere; }
+    .pp-advance-badge { margin-left:auto; font-size:9px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; opacity:.72; padding:2px 6px; border:1px solid var(--lumiverse-border); border-radius:999px; white-space:nowrap; }
+    .pp-choice-text { display:block; min-width:0; max-width:100%; box-sizing:border-box; font-size:12.5px; line-height:1.45; color:var(--lumiverse-text-muted); white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; }
     .pp-loading { display:flex; align-items:center; gap:8px; color:var(--lumiverse-text-muted); font-size:12px; padding:4px 2px; }
     .pp-dot { width:6px; height:6px; border-radius:999px; background:currentColor; animation:pp-pulse 1.1s infinite alternate; }
     @keyframes pp-pulse { from{opacity:.25; transform:scale(.8)} to{opacity:1; transform:scale(1.1)} }
@@ -228,7 +267,29 @@ export function setup(ctx: Ctx) {
       try { ctx.dom.uninject(existing) } catch {}
       cards.delete(messageId)
     }
-    const wrapper = ctx.dom.inject(bubble, `
+    // Lumiverse's BubbleMessage root is a horizontal flex row. Injecting directly
+    // into that root makes the Persona Paths wrapper a new flex sibling and can
+    // squeeze/shift the real message column. Resolve the bubble's vertical content
+    // stack and mount there instead so Paths participates in the intended column.
+    const messageContent = bubble.querySelector('[data-component="MessageContent"]') as HTMLElement | null
+    let mountTarget: HTMLElement | null = messageContent
+    while (mountTarget?.parentElement && mountTarget.parentElement !== bubble) {
+      mountTarget = mountTarget.parentElement
+    }
+    if (!mountTarget || mountTarget.parentElement !== bubble) {
+      // Fallback for custom BubbleMessage renderers: choose a direct flex-column
+      // child rather than ever injecting as a sibling into the horizontal root.
+      mountTarget = Array.from(bubble.children).find((child) => {
+        if (!(child instanceof HTMLElement)) return false
+        const style = getComputedStyle(child)
+        return style.display.includes('flex') && style.flexDirection === 'column'
+      }) as HTMLElement | undefined || null
+    }
+    if (!mountTarget) {
+      console.warn('[Persona Paths] Could not find a safe vertical message mount; skipping card injection', messageId)
+      return null
+    }
+    const wrapper = ctx.dom.inject(mountTarget, `
       <section class="pp-card" data-pp-message="${messageId}">
         <div class="pp-head">
           <span class="pp-brand">Persona Paths</span>
@@ -251,6 +312,7 @@ export function setup(ctx: Ctx) {
         </div>
       </section>
     `, 'beforeend') as HTMLElement
+    wrapper.classList.add('pp-injection-root')
     const regen = wrapper.querySelector('.pp-regen-btn') as HTMLButtonElement | null
     const guide = wrapper.querySelector('.pp-guide-btn') as HTMLButtonElement | null
     const guidancePanel = wrapper.querySelector('.pp-guidance-panel') as HTMLElement | null
@@ -361,6 +423,12 @@ export function setup(ctx: Ctx) {
       const title = ctx.dom.createElement('span', { class: 'pp-choice-title' }) as HTMLElement
       title.textContent = choice.title || choice.intent || `Option ${index + 1}`
       top.append(num, title)
+      if (choice.advances_scene) {
+        const badge = ctx.dom.createElement('span', { class: 'pp-advance-badge' }) as HTMLElement
+        badge.textContent = 'Advance scene'
+        badge.title = 'This path is deliberately designed to move the story into a new beat.'
+        top.appendChild(badge)
+      }
       const body = ctx.dom.createElement('span', { class: 'pp-choice-text' }) as HTMLElement
       renderChoiceText(body, choice.text, currentState?.prismInfo?.color || data.prismColor)
       button.append(top, body)

@@ -1,6 +1,19 @@
 # Persona Paths
 
-Version 0.1.15
+## v0.1.19 — Lumiverse message-layout compatibility fix
+
+- Persona Paths now mounts cards inside Lumiverse's vertical message-content stack instead of the horizontal BubbleMessage root. This prevents Path cards from becoming flex siblings that squeeze or shove the actual chat content sideways.
+- Added strict width/min-width/box-sizing guards to the injection wrapper, cards, and choice buttons to prevent intrinsic-width overflow from affecting Lumiverse's virtualized message layout.
+- Includes the v0.1.18 sparse inner-thought convention and all earlier features.
+
+## v0.1.18 — Sparse inner-thought convention
+
+Persona Paths now explicitly teaches the CYOA model how to handle direct inner thoughts: they are optional, rare, and only useful when they add meaningful subtext or conflict that action/dialogue cannot express as well. A normal set should contain zero or one direct-thought choice unless the scene is unusually introspective. Direct thoughts use single-asterisk Markdown italics (`*This is a terrible idea.*`) and are never placed in quotation marks.
+
+Path cards visually render those Markdown thought spans as italics while preserving the literal `*...*` in the underlying choice text, so clicking a choice still inserts ordinary Markdown into the Lumiverse composer. Prism dialogue coloring remains separate and continues to apply only to quoted speech.
+
+This build also includes the v0.1.17 Prism-compatible dialogue quote normalization and the v0.1.16 **Scene Advancer** behavior.
+Version 0.1.19
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -130,7 +143,7 @@ Manual generation requires Lumiverse's `chats` permission in addition to the exi
 - Choice text and composer insertion remain plain text; Prism still owns formatting of the actual sent message.
 
 
-## v0.1.15 — guided regeneration
+## v0.1.16 — guided regeneration
 
 - Adds **Regenerate with guidance** (✎) to every Persona Paths card.
 - Guidance is one-shot by default and applies only to that regeneration.

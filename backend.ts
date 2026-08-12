@@ -4,6 +4,7 @@ type Choice = {
   intent: string
   title: string
   text: string
+  advances_scene?: boolean
 }
 
 type PathResult = {
@@ -51,7 +52,7 @@ const MEMORY_PATH = 'relationship_memory.json'
 
 const DEFAULT_CONFIG: Config = {
   enabled: true,
-  choiceCount: 4,
+  choiceCount: 5,
   contextMessages: 12,
   recentUserExamples: 6,
   pov: 'auto',
@@ -118,7 +119,7 @@ async function loadState() {
     if (!entry || !Array.isArray((entry as any).choices)) continue
     ;(entry as any).choices = (entry as any).choices.map((choice: any) => {
       const before = String(choice?.text || '')
-      const after = cleanRoleplayText(before)
+      const after = cleanGeneratedChoiceText(before)
       if (after !== before.trim()) cacheChanged = true
       return { ...choice, text: after }
     })
@@ -206,6 +207,21 @@ function stripColorMarkup(text: unknown) {
 
 function cleanRoleplayText(text: unknown) {
   return stripColorMarkup(text).trim()
+}
+
+// Prism recognizes spoken dialogue delimited by double quotes. Some CYOA
+// models stylistically emit curly single quotation marks instead. Normalize
+// only dialogue-looking paired curly singles in GENERATED Path text so the
+// visible card and the subsequently sent plain-text user turn remain Prism-
+// compatible. Interior apostrophes such as don’t are preserved because a
+// closing quote is only accepted at a dialogue boundary.
+function normalizePrismDialogueQuotes(text: unknown) {
+  const source = String(text || '')
+  return source.replace(/(^|[\s([{>—–-])‘([^‘\n]*?)’(?=$|[\s)\]}>.,!?;:—–-])/gm, (_match, boundary, inner) => `${boundary}“${inner}”`)
+}
+
+function cleanGeneratedChoiceText(text: unknown) {
+  return normalizePrismDialogueQuotes(cleanRoleplayText(text)).trim()
 }
 
 
@@ -360,6 +376,7 @@ function validateResult(result: any, expectedCount: number, detail: Config['deta
   if (choices.length !== expectedCount) issues.push(`expected exactly ${expectedCount} choices`)
 
   const intents = new Set<string>()
+  let sceneAdvancers = 0
   const minLength = detail === 'compact' ? 55 : detail === 'detailed' ? 180 : 100
 
   for (let i = 0; i < choices.length; i += 1) {
@@ -370,7 +387,10 @@ function validateResult(result: any, expectedCount: number, detail: Config['deta
     const intent = String(c.intent || '').trim().toLowerCase()
     if (intent && intents.has(intent)) issues.push(`choice ${i + 1} repeats another intent`)
     if (intent) intents.add(intent)
+    if (c.advances_scene === true) sceneAdvancers += 1
   }
+
+  if (sceneAdvancers !== 1) issues.push(`expected exactly one scene-advancing choice, got ${sceneAdvancers}`)
 
   return issues
 }
@@ -417,7 +437,11 @@ CHOICE QUALITY RULES
 - Every choice must contain a concrete non-dialogue action, physical decision, deliberate stillness, change of objective, or other story-moving behavior. Dialogue is optional and should support the choice rather than BE the entire choice.
 - Consider movement, leaving the scene, travel, investigation, preparation, physical interaction, escalation, retreat, concealment, waiting, observation, helping, refusing, changing objectives, interacting with the environment, or intentionally doing nothing when those are plausible.
 - The choices must differ in TRAJECTORY, not merely wording, tone, or punchline.
-- Do not force artificial categories. If the scene strongly favors several similar emotional responses, keep them plausible while making their actual objectives/actions meaningfully different.
+- EXACTLY ONE choice must be the SCENE ADVANCER. Mark only that choice with "advances_scene": true; all other choices must use false.
+- The Scene Advancer must commit the persona to a meaningful next beat that materially changes the situation instead of merely continuing the current conversational/emotional loop. Examples include leaving or entering a place, beginning travel, starting or abandoning a task, initiating an investigation, making a decisive physical move, acting on a plan, changing the immediate objective, or otherwise creating a new state for the story model to respond to.
+- "Advance the scene" does NOT mean "be reckless", "escalate", or "invent a twist". It must remain plausible for this persona and moment, and it must still obey the authorship boundary below. A quiet departure, going to sleep, beginning preparations, or setting off down a trail can advance the scene when appropriate.
+- The Scene Advancer may initiate an action but must not decide its external result. Example: GOOD: "I shoulder my pack and start down the trail." BAD: "I shoulder my pack, reach town by dawn, and find the missing merchant."
+- The remaining choices should stay organic and persona-faithful; do not force them into fixed categories. If the scene strongly favors several similar emotional responses, keep them plausible while making their actual objectives/actions meaningfully different.
 - The player is allowed to walk away, end a conversation, leave town, pack up, set off down the trail, ignore a hook, or choose a direction the assistant did not explicitly invite.
 - ${detailInstruction(cfg.detail)}
 
@@ -434,6 +458,10 @@ STYLE
 - ${requestedTense}
 - Match the player's established voice, including bluntness, profanity, humor, tenderness, formality, or roughness when supported.
 - Do NOT emit HTML, <font> tags, BBCode color tags, CSS, or Prism color markup. Persona Paths handles presentation separately.
+- Spoken dialogue MUST use double quotation marks, preferably typographic “ ”. Never use single quotation marks ‘ ’ as dialogue delimiters; Prism does not treat them as persona dialogue. Apostrophes inside words are fine.
+- Inner thoughts are OPTIONAL and should be used sparingly. Most choices should contain no direct inner thought. Across a normal set of choices, prefer zero or one choices with direct inner thought unless the scene is unusually introspective.
+- Include a direct inner thought only when it adds meaningful subtext, conflict, hesitation, desire, or information that action/dialogue cannot convey as well. Do not use thoughts merely to explain an action that is already obvious.
+- When a direct inner thought is used, format it as Markdown italics with single asterisks, for example: *This is a terrible idea.* Never put inner thoughts in quotation marks.
 - ADULT CONTENT: ${adultContentInstruction(cfg.adultContent)}
 - The choice text must be ready to paste directly into the user's composer. Do not put labels or explanations inside the pasted text.
 
@@ -450,7 +478,7 @@ Return JSON only, with this exact shape:
     { "subject": "Elena", "notes": ["unusually patient", "protective", "still blunt and teasing"] }
   ],
   "choices": [
-    { "intent": "short unique trajectory", "title": "2–5 word UI title", "text": "paste-ready user turn" }
+    { "intent": "short unique trajectory", "title": "2–5 word UI title", "text": "paste-ready user turn", "advances_scene": false }
   ]
 }
 No markdown. No commentary.`
@@ -619,7 +647,8 @@ async function generatePaths(args: {
   if (parsed && Array.isArray(parsed.choices)) {
     parsed.choices = parsed.choices.map((choice: any) => ({
       ...choice,
-      text: cleanRoleplayText(choice?.text),
+      text: cleanGeneratedChoiceText(choice?.text),
+      advances_scene: choice?.advances_scene === true,
     }))
   }
   let issues = validateResult(parsed, config.choiceCount, config.detail)
@@ -672,7 +701,8 @@ Generate the answer again from scratch. Return one corrected JSON object only. P
     if (parsed && Array.isArray(parsed.choices)) {
       parsed.choices = parsed.choices.map((choice: any) => ({
         ...choice,
-        text: cleanRoleplayText(choice?.text),
+        text: cleanGeneratedChoiceText(choice?.text),
+        advances_scene: choice?.advances_scene === true,
       }))
     }
     issues = validateResult(parsed, config.choiceCount, config.detail)
@@ -683,7 +713,8 @@ Generate the answer again from scratch. Return one corrected JSON object only. P
   parsed.choices = parsed.choices.map((choice: any) => ({
     intent: String(choice.intent || '').trim(),
     title: String(choice.title || '').trim(),
-    text: cleanRoleplayText(choice.text),
+    text: cleanGeneratedChoiceText(choice.text),
+    advances_scene: choice?.advances_scene === true,
   }))
   parsed.relationship_updates = Array.isArray(parsed.relationship_updates)
     ? parsed.relationship_updates.map((item: any) => ({
