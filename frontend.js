@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.19';
+const EXT_VERSION = '0.1.20';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -245,211 +245,314 @@ export function setup(ctx) {
     .pp-version { font-size:10px; color:var(--lumiverse-text-muted); opacity:.7; margin-top:-8px; }
     @media (max-width: 620px) { .pp-grid { grid-template-columns:1fr; } .pp-choice-text { font-size:12px; } }
   `);
-    function ensureCard(messageId, chatId) {
-        const existing = cards.get(messageId);
-        if (existing?.isConnected)
-            return existing;
-        const bubble = ctx.dom.findMessageElement(messageId);
-        if (!bubble)
-            return null;
-        if (existing) {
+    function widgetJson(value) {
+        return JSON.stringify(value)
+            .replace(/</g, '\\u003c')
+            .replace(/>/g, '\\u003e')
+            .replace(/&/g, '\\u0026')
+            .replace(/\u2028/g, '\\u2028')
+            .replace(/\u2029/g, '\\u2029');
+    }
+    function retireLegacyCards() {
+        // v0.1.19 (and earlier) used direct DOM injection. Lumiverse persists those
+        // injections across message virtualization, so proactively retire any mounted
+        // legacy wrappers before using the host-managed message-widget API.
+        const wrappers = new Set();
+        document.querySelectorAll('.pp-injection-root').forEach((el) => wrappers.add(el));
+        document.querySelectorAll('.pp-card[data-pp-message]').forEach((card) => {
+            if (card.parentElement)
+                wrappers.add(card.parentElement);
+        });
+        for (const wrapper of wrappers) {
             try {
-                ctx.dom.uninject(existing);
+                ctx.dom.uninject(wrapper);
+            }
+            catch {
+                try {
+                    wrapper.remove();
+                }
+                catch { }
+            }
+        }
+    }
+    retireLegacyCards();
+    function renderMessageWidget(messageId, chatId, model) {
+        const previous = cards.get(messageId);
+        if (previous) {
+            try {
+                previous();
             }
             catch { }
             cards.delete(messageId);
         }
-        // Lumiverse's BubbleMessage root is a horizontal flex row. Injecting directly
-        // into that root makes the Persona Paths wrapper a new flex sibling and can
-        // squeeze/shift the real message column. Resolve the bubble's vertical content
-        // stack and mount there instead so Paths participates in the intended column.
-        const messageContent = bubble.querySelector('[data-component="MessageContent"]');
-        let mountTarget = messageContent;
-        while (mountTarget?.parentElement && mountTarget.parentElement !== bubble) {
-            mountTarget = mountTarget.parentElement;
-        }
-        if (!mountTarget || mountTarget.parentElement !== bubble) {
-            // Fallback for custom BubbleMessage renderers: choose a direct flex-column
-            // child rather than ever injecting as a sibling into the horizontal root.
-            mountTarget = Array.from(bubble.children).find((child) => {
-                if (!(child instanceof HTMLElement))
-                    return false;
-                const style = getComputedStyle(child);
-                return style.display.includes('flex') && style.flexDirection === 'column';
-            }) || null;
-        }
-        if (!mountTarget) {
-            console.warn('[Persona Paths] Could not find a safe vertical message mount; skipping card injection', messageId);
-            return null;
-        }
-        const wrapper = ctx.dom.inject(mountTarget, `
-      <section class="pp-card" data-pp-message="${messageId}">
-        <div class="pp-head">
-          <span class="pp-brand">Persona Paths</span>
-          <span class="pp-style"></span>
-          <span class="pp-toastish">Added to composer</span>
-          <span class="pp-spacer"></span>
-          <button type="button" class="pp-icon-btn pp-guide-btn" title="Regenerate with guidance" aria-label="Regenerate with guidance">✎</button>
-          <button type="button" class="pp-icon-btn pp-regen-btn" title="Regenerate choices" aria-label="Regenerate choices">↻</button>
-        </div>
-        <div class="pp-choices"></div>
-        <div class="pp-guidance-panel" hidden>
-          <div class="pp-guidance-title">Regenerate with guidance</div>
-          <textarea class="pp-guidance-input" placeholder="What direction were you thinking? e.g. Stop arguing and give me options where Rook physically leaves camp."></textarea>
-          <label class="pp-guidance-save"><input type="checkbox" class="pp-guidance-save-check"> Save this as active persona guidance</label>
-          <div class="pp-guidance-actions">
-            <button type="button" class="pp-btn pp-guidance-cancel">Cancel</button>
-            <button type="button" class="pp-btn pp-primary pp-guidance-generate">Generate new paths</button>
-          </div>
-          <div class="pp-guidance-hint">One-shot by default. Saving appends this correction to the active persona’s private Persona Paths guidance.</div>
-        </div>
-      </section>
-    `, 'beforeend');
-        wrapper.classList.add('pp-injection-root');
-        const regen = wrapper.querySelector('.pp-regen-btn');
-        const guide = wrapper.querySelector('.pp-guide-btn');
-        const guidancePanel = wrapper.querySelector('.pp-guidance-panel');
-        const guidanceInput = wrapper.querySelector('.pp-guidance-input');
-        const guidanceSave = wrapper.querySelector('.pp-guidance-save-check');
-        const guidanceCancel = wrapper.querySelector('.pp-guidance-cancel');
-        const guidanceGenerate = wrapper.querySelector('.pp-guidance-generate');
-        regen?.addEventListener('click', () => {
-            const data = dataByMessage.get(messageId);
-            const resolvedChatId = data?.chatId || chatId;
-            if (!resolvedChatId)
-                return;
-            if (guidancePanel)
-                guidancePanel.hidden = true;
-            renderLoading(messageId, resolvedChatId);
-            ctx.sendToBackend({ type: 'regenerate', chatId: resolvedChatId, messageId });
-        });
-        guide?.addEventListener('click', () => {
-            if (!guidancePanel)
-                return;
-            guidancePanel.hidden = !guidancePanel.hidden;
-            if (!guidancePanel.hidden)
-                window.setTimeout(() => guidanceInput?.focus(), 0);
-        });
-        guidanceCancel?.addEventListener('click', () => {
-            if (guidancePanel)
-                guidancePanel.hidden = true;
-        });
-        guidanceGenerate?.addEventListener('click', () => {
-            const guidance = String(guidanceInput?.value || '').trim();
-            if (!guidance) {
-                guidanceInput?.focus();
-                return;
-            }
-            const data = dataByMessage.get(messageId);
-            const resolvedChatId = data?.chatId || chatId;
-            if (!resolvedChatId)
-                return;
-            if (guidancePanel)
-                guidancePanel.hidden = true;
-            renderLoading(messageId, resolvedChatId);
-            ctx.sendToBackend({
-                type: 'regenerate_with_guidance',
-                chatId: resolvedChatId,
-                messageId,
-                guidance,
-                saveAsPersonaGuidance: !!guidanceSave?.checked,
+        const prismColor = /^#[0-9A-F]{6}$/i.test(String(model?.prismColor || ''))
+            ? String(model.prismColor).toUpperCase()
+            : '';
+        const payload = {
+            mode: model?.mode || 'choices',
+            messageId,
+            chatId,
+            styleText: String(model?.styleText || ''),
+            choices: Array.isArray(model?.choices) ? model.choices : [],
+            error: String(model?.error || ''),
+            prismColor,
+        };
+        const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin:0; padding:0; width:100%; overflow:hidden; background:transparent; }
+  body { box-sizing:border-box; color:var(--lumiverse-text); font-family:inherit; }
+  * { box-sizing:border-box; }
+  .card {
+    width:100%; min-width:0; margin:10px 0 2px; padding:10px;
+    border:1px solid var(--lumiverse-border); border-radius:14px;
+    background:color-mix(in srgb, var(--lumiverse-fill-subtle) 88%, transparent);
+    box-shadow:0 5px 18px rgba(0,0,0,.12);
+  }
+  .head { display:flex; align-items:center; gap:8px; min-width:0; margin:0 2px 8px; min-height:26px; }
+  .brand { font-size:12px; font-weight:700; letter-spacing:.02em; color:var(--lumiverse-text-muted); }
+  .style { font-size:10px; color:var(--lumiverse-text-muted); opacity:.78; }
+  .toast { font-size:10px; color:var(--lumiverse-text-muted); opacity:0; transition:opacity .15s; }
+  .toast.show { opacity:1; }
+  .spacer { flex:1; min-width:0; }
+  .icon {
+    border:0; background:transparent; color:var(--lumiverse-text-muted); cursor:pointer;
+    border-radius:8px; width:28px; height:28px; padding:0; font-size:17px; line-height:1;
+  }
+  .icon:hover { background:var(--lumiverse-fill); color:var(--lumiverse-text); }
+  .choices { display:flex; flex-direction:column; gap:7px; min-width:0; }
+  .choice {
+    display:block; width:100%; min-width:0; max-width:100%; text-align:left; cursor:pointer;
+    border:1px solid transparent; border-radius:12px; padding:10px 12px;
+    background:var(--lumiverse-fill); color:var(--lumiverse-text);
+  }
+  .choice:hover { border-color:var(--lumiverse-border-hover, var(--lumiverse-border)); background:var(--lumiverse-fill-subtle); }
+  .top { display:flex; align-items:center; gap:8px; min-width:0; margin-bottom:4px; }
+  .num {
+    width:20px; height:20px; flex:0 0 auto; border-radius:999px; display:inline-flex;
+    align-items:center; justify-content:center; font-size:10px; font-weight:800;
+    background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text-muted);
+  }
+  .title { min-width:0; font-size:12px; font-weight:700; overflow-wrap:anywhere; }
+  .advance {
+    margin-left:auto; flex:0 0 auto; font-size:9px; font-weight:700; letter-spacing:.04em;
+    text-transform:uppercase; opacity:.72; padding:2px 6px; border:1px solid var(--lumiverse-border);
+    border-radius:999px; white-space:nowrap;
+  }
+  .text {
+    display:block; min-width:0; max-width:100%; font-size:12.5px; line-height:1.45;
+    color:var(--lumiverse-text-muted); white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;
+  }
+  .loading { display:flex; align-items:center; gap:8px; color:var(--lumiverse-text-muted); font-size:12px; padding:4px 2px; }
+  .dot { width:6px; height:6px; border-radius:999px; background:currentColor; animation:pulse 1.1s infinite alternate; }
+  @keyframes pulse { from{opacity:.25; transform:scale(.8)} to{opacity:1; transform:scale(1.1)} }
+  .error { font-size:12px; line-height:1.4; color:var(--lumiverse-text-muted); padding:4px 2px; }
+  .btn {
+    border:1px solid var(--lumiverse-border); border-radius:9px; background:var(--lumiverse-fill);
+    color:var(--lumiverse-text); padding:8px 10px; font:inherit; font-size:11px; cursor:pointer;
+  }
+  .btn:hover { background:var(--lumiverse-fill-subtle); }
+  .primary { font-weight:750; }
+  .guide { margin-top:9px; padding:10px; border:1px solid var(--lumiverse-border); border-radius:11px; background:var(--lumiverse-fill); }
+  .guide[hidden] { display:none !important; }
+  .guide-title { font-size:11.5px; font-weight:750; margin-bottom:6px; }
+  textarea {
+    width:100%; min-height:72px; resize:vertical; border:1px solid var(--lumiverse-border); border-radius:9px;
+    background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text); padding:8px 9px; font:inherit; font-size:12px; line-height:1.4;
+  }
+  .save { display:flex; align-items:center; gap:7px; margin-top:8px; font-size:10.5px; color:var(--lumiverse-text-muted); cursor:pointer; }
+  .actions { display:flex; justify-content:flex-end; gap:7px; margin-top:9px; }
+  .hint { margin-top:7px; font-size:9.8px; line-height:1.35; color:var(--lumiverse-text-muted); opacity:.78; }
+  em { font-style:italic; }
+</style>
+</head>
+<body>
+  <section class="card">
+    <div class="head">
+      <span class="brand">Persona Paths</span>
+      <span class="style" id="style"></span>
+      <span class="toast" id="toast">Added to composer</span>
+      <span class="spacer"></span>
+      <button type="button" class="icon" id="guideBtn" title="Regenerate with guidance" aria-label="Regenerate with guidance">✎</button>
+      <button type="button" class="icon" id="regenBtn" title="Regenerate choices" aria-label="Regenerate choices">↻</button>
+    </div>
+    <div class="choices" id="choices"></div>
+    <div class="guide" id="guide" hidden>
+      <div class="guide-title">Regenerate with guidance</div>
+      <textarea id="guidance" placeholder="What direction were you thinking? e.g. Stop arguing and give me options where Rook physically leaves camp."></textarea>
+      <label class="save"><input type="checkbox" id="saveGuidance"> Save this as active persona guidance</label>
+      <div class="actions">
+        <button type="button" class="btn" id="cancelGuide">Cancel</button>
+        <button type="button" class="btn primary" id="generateGuide">Generate new paths</button>
+      </div>
+      <div class="hint">One-shot by default. Saving appends this correction to the active persona’s private Persona Paths guidance.</div>
+    </div>
+  </section>
+<script>
+(() => {
+  const model = ${widgetJson(payload)};
+  const host = document.getElementById('choices');
+  const style = document.getElementById('style');
+  const toast = document.getElementById('toast');
+  const guide = document.getElementById('guide');
+  const guideBtn = document.getElementById('guideBtn');
+  const regenBtn = document.getElementById('regenBtn');
+  const color = /^#[0-9A-F]{6}$/i.test(model.prismColor || '') ? model.prismColor : '';
+  style.textContent = model.styleText || '';
+
+  function resize() { try { window.spindleSandbox.requestResize(); } catch {} }
+  function post(payload) { window.spindleSandbox.postMessage(payload); }
+  function appendItalic(parent, text) {
+    const source = String(text || '');
+    const pattern = /(^|[^*])\\*([^*\\n]+?)\\*(?!\\*)/g;
+    let cursor = 0, match;
+    while ((match = pattern.exec(source))) {
+      const boundary = match[1] || '';
+      const italicText = match[2] || '';
+      const italicStart = match.index + boundary.length;
+      if (italicStart > cursor) parent.appendChild(document.createTextNode(source.slice(cursor, italicStart)));
+      const em = document.createElement('em'); em.textContent = italicText; parent.appendChild(em);
+      cursor = pattern.lastIndex;
+    }
+    if (cursor < source.length) parent.appendChild(document.createTextNode(source.slice(cursor)));
+  }
+  function renderRich(parent, text) {
+    const source = String(text || '');
+    if (!color) { appendItalic(parent, source); return; }
+    const pattern = /“[^”\\n]+”|(^|[\\s([{>—–-])"[^"\\n]+"(?=$|[\\s)\\]}>.,!?;:—–-])/gm;
+    let cursor = 0, match;
+    while ((match = pattern.exec(source))) {
+      let start = match.index;
+      let quoted = match[0];
+      if (match[1]) {
+        appendItalic(parent, source.slice(cursor, start + match[1].length));
+        start += match[1].length;
+        quoted = quoted.slice(match[1].length);
+      } else if (start > cursor) appendItalic(parent, source.slice(cursor, start));
+      const span = document.createElement('span'); span.textContent = quoted; span.style.color = color; parent.appendChild(span);
+      cursor = start + quoted.length;
+    }
+    if (cursor < source.length) appendItalic(parent, source.slice(cursor));
+    if (!parent.childNodes.length) appendItalic(parent, source);
+  }
+  function showToast(text) {
+    toast.textContent = text; toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 1400);
+  }
+
+  if (model.mode === 'loading') {
+    guideBtn.hidden = true; regenBtn.hidden = true;
+    const row = document.createElement('div'); row.className = 'loading';
+    const dot = document.createElement('span'); dot.className = 'dot';
+    const label = document.createElement('span'); label.textContent = 'Reading the scene…';
+    row.append(dot, label); host.appendChild(row);
+  } else if (model.mode === 'error') {
+    guideBtn.hidden = true; regenBtn.hidden = true;
+    const msg = document.createElement('div'); msg.className = 'error'; msg.textContent = 'Couldn’t generate choices. ' + (model.error || 'Unknown error');
+    const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'btn'; retry.style.marginTop = '8px'; retry.textContent = 'Retry';
+    retry.addEventListener('click', () => post({ type:'retry' }));
+    host.append(msg, retry);
+  } else {
+    (model.choices || []).forEach((choice, index) => {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'choice';
+      const top = document.createElement('span'); top.className = 'top';
+      const num = document.createElement('span'); num.className = 'num'; num.textContent = String(index + 1);
+      const title = document.createElement('span'); title.className = 'title'; title.textContent = choice.title || choice.intent || ('Option ' + (index + 1));
+      top.append(num, title);
+      if (choice.advances_scene) {
+        const badge = document.createElement('span'); badge.className = 'advance'; badge.textContent = 'Advance scene'; top.appendChild(badge);
+      }
+      const body = document.createElement('span'); body.className = 'text'; renderRich(body, choice.text || '');
+      button.append(top, body);
+      button.addEventListener('click', () => { post({ type:'choice', index }); showToast('Added to composer'); });
+      host.appendChild(button);
+    });
+  }
+
+  regenBtn.addEventListener('click', () => post({ type:'regenerate' }));
+  guideBtn.addEventListener('click', () => {
+    guide.hidden = !guide.hidden; resize();
+    if (!guide.hidden) setTimeout(() => document.getElementById('guidance').focus(), 0);
+  });
+  document.getElementById('cancelGuide').addEventListener('click', () => { guide.hidden = true; resize(); });
+  document.getElementById('generateGuide').addEventListener('click', () => {
+    const guidance = String(document.getElementById('guidance').value || '').trim();
+    if (!guidance) { document.getElementById('guidance').focus(); return; }
+    post({ type:'guidance', guidance, saveAsPersonaGuidance: !!document.getElementById('saveGuidance').checked });
+  });
+  resize();
+})();
+</script>
+</body>
+</html>`;
+        try {
+            const cleanup = ctx.messages.renderWidget({ messageId, widgetId: 'persona-paths-card', html }, async (event) => {
+                if (!event || typeof event !== 'object')
+                    return;
+                const type = String(event.type || '');
+                if (type === 'choice') {
+                    const data = dataByMessage.get(messageId);
+                    const index = Number(event.index);
+                    const choice = data?.choices?.[index];
+                    if (choice)
+                        await fillComposer(choice.text);
+                    return;
+                }
+                if (type === 'regenerate' || type === 'retry') {
+                    renderLoading(messageId, chatId);
+                    ctx.sendToBackend({ type: 'regenerate', chatId, messageId });
+                    return;
+                }
+                if (type === 'guidance') {
+                    const guidance = String(event.guidance || '').trim();
+                    if (!guidance)
+                        return;
+                    renderLoading(messageId, chatId);
+                    ctx.sendToBackend({
+                        type: 'regenerate_with_guidance',
+                        chatId,
+                        messageId,
+                        guidance,
+                        saveAsPersonaGuidance: !!event.saveAsPersonaGuidance,
+                    });
+                }
             });
-        });
-        cards.set(messageId, wrapper);
-        return wrapper;
+            cards.set(messageId, cleanup);
+            return true;
+        }
+        catch (err) {
+            console.error('[Persona Paths] Message widget render failed', err);
+            return false;
+        }
     }
     function removeCard(messageId) {
-        const existing = cards.get(messageId);
-        if (existing) {
+        const cleanup = cards.get(messageId);
+        if (cleanup) {
             try {
-                ctx.dom.uninject(existing);
+                cleanup();
             }
-            catch {
-                try {
-                    existing.remove();
-                }
-                catch { }
-            }
+            catch { }
         }
         cards.delete(messageId);
         dataByMessage.delete(messageId);
     }
     function renderLoading(messageId, chatId) {
-        const card = ensureCard(messageId, chatId);
-        if (!card)
-            return;
-        const style = card.querySelector('.pp-style');
-        if (style)
-            style.textContent = '';
-        const host = card.querySelector('.pp-choices');
-        if (!host)
-            return;
-        host.innerHTML = '';
-        const row = ctx.dom.createElement('div', { class: 'pp-loading' });
-        const dot = ctx.dom.createElement('span', { class: 'pp-dot' });
-        const text = ctx.dom.createElement('span');
-        text.textContent = 'Reading the scene…';
-        row.append(dot, text);
-        host.appendChild(row);
+        renderMessageWidget(messageId, chatId, { mode: 'loading' });
     }
     function renderError(messageId, chatId, error) {
-        const card = ensureCard(messageId, chatId);
-        if (!card)
-            return;
-        const host = card.querySelector('.pp-choices');
-        if (!host)
-            return;
-        host.innerHTML = '';
-        const row = ctx.dom.createElement('div', { class: 'pp-error' });
-        row.textContent = `Couldn’t generate choices. ${error}`;
-        const retry = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' });
-        retry.textContent = 'Retry';
-        retry.style.marginTop = '8px';
-        retry.addEventListener('click', () => {
-            renderLoading(messageId, chatId);
-            ctx.sendToBackend({ type: 'regenerate', chatId, messageId });
-        });
-        host.append(row, retry);
+        renderMessageWidget(messageId, chatId, { mode: 'error', error });
     }
     function renderChoices(data) {
         dataByMessage.set(data.messageId, data);
-        const card = ensureCard(data.messageId, data.chatId);
-        if (!card)
-            return;
-        const style = card.querySelector('.pp-style');
-        if (style)
-            style.textContent = titleCaseStyle(data.style);
-        const host = card.querySelector('.pp-choices');
-        if (!host)
-            return;
-        host.innerHTML = '';
-        data.choices.forEach((choice, index) => {
-            const button = ctx.dom.createElement('button', { type: 'button', class: 'pp-choice' });
-            const top = ctx.dom.createElement('span', { class: 'pp-choice-top' });
-            const num = ctx.dom.createElement('span', { class: 'pp-num' });
-            num.textContent = String(index + 1);
-            const title = ctx.dom.createElement('span', { class: 'pp-choice-title' });
-            title.textContent = choice.title || choice.intent || `Option ${index + 1}`;
-            top.append(num, title);
-            if (choice.advances_scene) {
-                const badge = ctx.dom.createElement('span', { class: 'pp-advance-badge' });
-                badge.textContent = 'Advance scene';
-                badge.title = 'This path is deliberately designed to move the story into a new beat.';
-                top.appendChild(badge);
-            }
-            const body = ctx.dom.createElement('span', { class: 'pp-choice-text' });
-            renderChoiceText(body, choice.text, currentState?.prismInfo?.color || data.prismColor);
-            button.append(top, body);
-            button.addEventListener('click', async () => {
-                const filled = await fillComposer(choice.text);
-                const hint = card.querySelector('.pp-toastish');
-                if (hint) {
-                    hint.textContent = filled ? 'Added to composer' : 'Copied to clipboard';
-                    hint.classList.add('show');
-                    window.setTimeout(() => hint.classList.remove('show'), 1400);
-                }
-            });
-            host.appendChild(button);
+        renderMessageWidget(data.messageId, data.chatId, {
+            mode: 'choices',
+            styleText: titleCaseStyle(data.style),
+            choices: data.choices,
+            prismColor: currentState?.prismInfo?.color || data.prismColor,
         });
     }
     function scheduleSave(patch, delay = 180) {
@@ -897,14 +1000,6 @@ export function setup(ctx) {
                 if (currentState?.activePersona?.id === personaId)
                     personaInstructions.value = text;
             }
-            const messageId = String(payload.messageId || '');
-            const card = messageId ? cards.get(messageId) : null;
-            const hint = card?.querySelector('.pp-toastish');
-            if (hint) {
-                hint.textContent = 'Saved to persona guidance';
-                hint.classList.add('show');
-                window.setTimeout(() => hint.classList.remove('show'), 1800);
-            }
         }
         else if (payload.type === 'memory_cleared') {
             clearMemory.textContent = 'Memory cleared ✓';
@@ -1004,6 +1099,12 @@ export function setup(ctx) {
                 cancelChoiceTimer(messageId);
             awaitingRender.clear();
             renderedMessages.clear();
+            for (const cleanup of cards.values()) {
+                try {
+                    cleanup();
+                }
+                catch { }
+            }
             cards.clear();
             dataByMessage.clear();
             setTimeout(() => {
@@ -1065,6 +1166,13 @@ export function setup(ctx) {
             floatLauncher?.destroy?.();
         }
         catch { }
+        for (const cleanup of cards.values()) {
+            try {
+                cleanup();
+            }
+            catch { }
+        }
+        cards.clear();
         removeStyle();
         tab.destroy();
         ctx.dom.cleanup();

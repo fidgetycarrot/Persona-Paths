@@ -1,19 +1,14 @@
 # Persona Paths
 
-## v0.1.19 — Lumiverse message-layout compatibility fix
+## v0.1.20 — Safe message-widget compatibility hotfix
 
-- Persona Paths now mounts cards inside Lumiverse's vertical message-content stack instead of the horizontal BubbleMessage root. This prevents Path cards from becoming flex siblings that squeeze or shove the actual chat content sideways.
-- Added strict width/min-width/box-sizing guards to the injection wrapper, cards, and choice buttons to prevent intrinsic-width overflow from affecting Lumiverse's virtualized message layout.
-- Includes the v0.1.18 sparse inner-thought convention and all earlier features.
+This release removes direct Persona Paths card injection from Lumiverse message DOM entirely. Per-message Paths now render through Lumiverse's host-managed `ctx.messages.renderWidget()` API, which isolates the card in an auto-sizing sandbox frame and prevents Persona Paths CSS/layout from participating in Lumiverse's message flex/virtualization layout.
 
-## v0.1.18 — Sparse inner-thought convention
+It also proactively retires mounted legacy Persona Paths direct-DOM injections from v0.1.19 and earlier when the extension starts.
 
-Persona Paths now explicitly teaches the CYOA model how to handle direct inner thoughts: they are optional, rare, and only useful when they add meaningful subtext or conflict that action/dialogue cannot express as well. A normal set should contain zero or one direct-thought choice unless the scene is unusually introspective. Direct thoughts use single-asterisk Markdown italics (`*This is a terrible idea.*`) and are never placed in quotation marks.
+All Persona Paths behavior from v0.1.18/v0.1.19 remains: scene-advancer choice, sparse italic inner thoughts, Prism integration/manual color, guided regeneration, OOC guard, delayed generation, manual run, and private persona/relationship context.
 
-Path cards visually render those Markdown thought spans as italics while preserving the literal `*...*` in the underlying choice text, so clicking a choice still inserts ordinary Markdown into the Lumiverse composer. Prism dialogue coloring remains separate and continues to apply only to quoted speech.
-
-This build also includes the v0.1.17 Prism-compatible dialogue quote normalization and the v0.1.16 **Scene Advancer** behavior.
-Version 0.1.19
+Version 0.1.20
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
