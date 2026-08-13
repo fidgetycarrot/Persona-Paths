@@ -13,6 +13,15 @@ type PathResult = {
   choices: Choice[]
 }
 
+type StoryMemoryContext = {
+  source: 'cortex' | 'chat_memory' | 'none'
+  memories: string[]
+  entities: string[]
+  relationships: string[]
+  arc: string
+  note?: string
+}
+
 type Config = {
   enabled: boolean
   choiceCount: number
@@ -443,74 +452,247 @@ function containsOocMarkerAnywhere(text: string) {
   return /(?:^|\n)\s*(?:\[\s*ooc\s*[\]\}]\s*:?\s*|\(\s*ooc\s*\)\s*:?\s*|ooc\s*:)/i.test(String(text || ''))
 }
 
-async function retrieveLongTermStoryMemory(
+function emptyStoryMemoryContext(note = ''): StoryMemoryContext {
+  return { source: 'none', memories: [], entities: [], relationships: [], arc: '', note }
+}
+
+function normalizedMemoryText(value: unknown) {
+  return cleanRoleplayText(value).replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+function compactJson(value: unknown, max = 1800) {
+  try {
+    const text = JSON.stringify(value)
+    return compactText(text === undefined ? '' : text, max)
+  } catch {
+    return ''
+  }
+}
+
+function formatCortexEntity(entity: any) {
+  if (!entity) return ''
+  if (typeof entity === 'string') return compactText(cleanRoleplayText(entity), 1600)
+  const name = String(entity.name || entity.canonicalName || entity.label || '').trim()
+  const type = String(entity.type || entity.entityType || '').trim()
+  const status = String(entity.status || '').trim()
+  const aliases = Array.isArray(entity.aliases)
+    ? entity.aliases.map((x: any) => String(x || '').trim()).filter(Boolean).slice(0, 5)
+    : []
+  const factsRaw = Array.isArray(entity.facts) ? entity.facts
+    : Array.isArray(entity.memoryFacts) ? entity.memoryFacts
+      : Array.isArray(entity.factList) ? entity.factList
+        : []
+  const facts = factsRaw
+    .map((x: any) => cleanRoleplayText(typeof x === 'string' ? x : (x?.content || x?.fact || x?.text || '')))
+    .filter(Boolean)
+    .slice(0, 8)
+  const description = cleanRoleplayText(entity.summary || entity.description || entity.context || '')
+  const valence = entity.emotionalValence && typeof entity.emotionalValence === 'object'
+    ? Object.entries(entity.emotionalValence)
+        .filter(([, v]) => Number(v) !== 0)
+        .slice(0, 6)
+        .map(([k, v]) => `${k}=${Number(v).toFixed(2)}`)
+        .join(', ')
+    : ''
+  const header = [name || '(unnamed entity)', type ? `[${type}]` : '', status ? `status=${status}` : '']
+    .filter(Boolean)
+    .join(' ')
+  const parts = [header]
+  if (aliases.length) parts.push(`Aliases: ${aliases.join(', ')}`)
+  if (description) parts.push(`Context: ${compactText(description, 900)}`)
+  if (facts.length) parts.push(`Facts: ${facts.join('; ')}`)
+  if (valence) parts.push(`Emotional context: ${valence}`)
+  return compactText(parts.filter(Boolean).join('\n'), 2200)
+}
+
+function formatCortexRelationship(rel: any) {
+  if (!rel) return ''
+  if (typeof rel === 'string') return compactText(cleanRoleplayText(rel), 1400)
+  const source = String(rel.sourceName || rel.source?.name || rel.source || rel.fromName || rel.from || '').trim()
+  const target = String(rel.targetName || rel.target?.name || rel.target || rel.toName || rel.to || '').trim()
+  const type = String(rel.type || rel.relationType || '').trim()
+  const label = cleanRoleplayText(rel.label || rel.description || rel.context || '')
+  const sentiment = Number(rel.sentiment)
+  const bits: string[] = []
+  if (source || target) bits.push(`${source || '?'} -> ${target || '?'}`)
+  if (type) bits.push(`type=${type}`)
+  if (label) bits.push(label)
+  if (Number.isFinite(sentiment)) bits.push(`sentiment=${sentiment.toFixed(2)}`)
+  if (bits.length) return compactText(bits.join(' | '), 1600)
+  return compactJson(rel, 1600)
+}
+
+function formatCortexArc(arc: any) {
+  if (!arc) return ''
+  if (typeof arc === 'string') return compactText(cleanRoleplayText(arc), 2600)
+  const title = cleanRoleplayText(arc.title || arc.name || arc.label || '')
+  const body = cleanRoleplayText(arc.summary || arc.content || arc.description || arc.text || '')
+  if (title || body) return compactText([title, body].filter(Boolean).join('\n'), 3200)
+  return compactJson(arc, 3200)
+}
+
+function buildCortexQueryText(sceneMessages: any[], persona: any) {
+  const recent = (sceneMessages || [])
+    .slice(-8)
+    .map((m: any) => {
+      const role = m?.role === 'user' ? 'PLAYER' : 'STORY'
+      return `${role}: ${compactText(cleanRoleplayText(m?.content), 1100)}`
+    })
+    .filter(Boolean)
+    .join('\n\n')
+  const personaName = String(persona?.name || '').trim()
+  return compactText(
+    `Retrieve earlier story facts, promises, secrets, injuries, decisions, relationship changes, known information, unresolved threads, and prior events relevant to choosing what ${personaName || 'the player persona'} would plausibly do next. Prefer established continuity over generic similarity.\n\nCURRENT SCENE:\n${recent}`,
+    9000,
+  )
+}
+
+async function retrieveChatMemoryFallback(
   chatId: string,
   userId: string | undefined,
   allMessages: any[],
   oocMessageIds: Set<string>,
   recentSceneStartIndex: number,
-) {
-  if (!config.longTermStoryMemory || !spindle.permissions.has('chats')) {
-    return { chunks: [] as string[], enabled: false, available: 0, pending: 0, retrievalMode: '' }
-  }
-
+): Promise<StoryMemoryContext> {
+  if (!spindle.permissions.has('chats')) return emptyStoryMemoryContext('Chat-memory fallback permission unavailable.')
   try {
-    // Ask for a few extras because we deliberately discard chunks that overlap
-    // the immediate scene or any OOC exchange.
     const requested = Math.min(24, config.storyMemoryChunks + 4)
     const result = await spindle.chats.getMemories(chatId, { topK: requested, userId })
     if (!result?.enabled || !Array.isArray(result?.chunks) || !result.chunks.length) {
-      spindle.log.info(`Persona Paths long-term memory unavailable for ${chatId}: enabled=${!!result?.enabled}, available=${Number(result?.chunksAvailable || 0)}, pending=${Number(result?.chunksPending || 0)}`)
-      return {
-        chunks: [] as string[],
-        enabled: !!result?.enabled,
-        available: Number(result?.chunksAvailable || 0),
-        pending: Number(result?.chunksPending || 0),
-        retrievalMode: String(result?.retrievalMode || ''),
-      }
+      spindle.log.info(`Persona Paths chat-memory fallback unavailable for ${chatId}: enabled=${!!result?.enabled}, available=${Number(result?.chunksAvailable || 0)}, pending=${Number(result?.chunksPending || 0)}`)
+      return emptyStoryMemoryContext('No vectorized chat-memory chunks were available.')
     }
-
     const oocIndexes = new Set<number>()
     for (let i = 0; i < allMessages.length; i += 1) {
       if (oocMessageIds.has(String(allMessages[i]?.id || ''))) oocIndexes.add(i)
     }
-
     const seen = new Set<string>()
-    const chunks: string[] = []
+    const memories: string[] = []
     for (const chunk of result.chunks) {
-      if (chunks.length >= config.storyMemoryChunks) break
-
+      if (memories.length >= config.storyMemoryChunks) break
       const range = memoryChunkRange(chunk)
-      // Recent scene is already supplied verbatim below. Keep semantic retrieval
-      // focused on older continuity instead of duplicating the last few turns.
       if (recentSceneStartIndex >= 0 && range.end != null && range.end >= recentSceneStartIndex) continue
-
-      // OOC/meta exchanges should remain invisible to Persona Paths even when
-      // Lumiverse's vector store happens to retrieve a chunk containing them.
       if (config.skipOoc && chunkOverlapsIndexSet(chunk, oocIndexes)) continue
-
       const cleaned = cleanRoleplayText(chunk?.content)
-      if (!cleaned) continue
-      if (config.skipOoc && containsOocMarkerAnywhere(cleaned)) continue
-
-      const normalized = cleaned.replace(/\s+/g, ' ').trim().toLowerCase()
+      if (!cleaned || (config.skipOoc && containsOocMarkerAnywhere(cleaned))) continue
+      const normalized = normalizedMemoryText(cleaned)
       if (!normalized || seen.has(normalized)) continue
       seen.add(normalized)
-      chunks.push(compactText(cleaned, 4200))
+      memories.push(compactText(cleaned, 4200))
     }
-
-    spindle.log.info(`Persona Paths long-term story memory for ${chatId}: using ${chunks.length}/${result.count || result.chunks.length} retrieved chunks (${result.retrievalMode || 'unknown'} mode; available=${result.chunksAvailable || 0}, pending=${result.chunksPending || 0}).`)
+    spindle.log.info(`Persona Paths chat-memory fallback for ${chatId}: using ${memories.length}/${result.count || result.chunks.length} retrieved chunks.`)
     return {
-      chunks,
-      enabled: true,
-      available: Number(result?.chunksAvailable || 0),
-      pending: Number(result?.chunksPending || 0),
-      retrievalMode: String(result?.retrievalMode || ''),
+      source: 'chat_memory', memories, entities: [], relationships: [], arc: '',
+      note: 'Memory Cortex was unavailable; using Lumiverse chat-memory fallback.',
     }
   } catch (err: any) {
-    // Memory is context enhancement, never a reason to block CYOA generation.
-    spindle.log.warn(`Persona Paths long-term story memory lookup failed for ${chatId}; continuing with recent scene only: ${err?.message || String(err)}`)
-    return { chunks: [] as string[], enabled: false, available: 0, pending: 0, retrievalMode: '' }
+    spindle.log.warn(`Persona Paths chat-memory fallback failed for ${chatId}: ${err?.message || String(err)}`)
+    return emptyStoryMemoryContext('Memory Cortex and chat-memory fallback were unavailable.')
+  }
+}
+
+async function retrieveStoryMemoryContext(
+  chatId: string,
+  userId: string | undefined,
+  allMessages: any[],
+  oocMessageIds: Set<string>,
+  recentSceneStartIndex: number,
+  sceneMessages: any[],
+  persona: any,
+): Promise<StoryMemoryContext> {
+  if (!config.longTermStoryMemory) return emptyStoryMemoryContext('Story-memory context is disabled in Persona Paths.')
+  if (!spindle.permissions.has('memories')) {
+    spindle.log.warn(`Persona Paths Memory Cortex permission is not granted for ${chatId}; trying chat-memory fallback.`)
+    return retrieveChatMemoryFallback(chatId, userId, allMessages, oocMessageIds, recentSceneStartIndex)
+  }
+  try {
+    const requested = Math.min(24, config.storyMemoryChunks + 4)
+    const queryText = buildCortexQueryText(sceneMessages, persona)
+    const result = await spindle.memories.cortex.query({
+      chatId,
+      queryText,
+      topK: requested,
+      includeConsolidations: true,
+      includeRelationships: true,
+      userId,
+    })
+
+    const recentNormalized = normalizedMemoryText((sceneMessages || []).map((m: any) => cleanRoleplayText(m?.content)).join('\n'))
+    const seen = new Set<string>()
+    const memories: string[] = []
+    for (const memory of Array.isArray(result?.memories) ? result.memories : []) {
+      if (memories.length >= config.storyMemoryChunks) break
+      const cleaned = cleanRoleplayText(memory?.content ?? memory?.text ?? memory)
+      if (!cleaned || (config.skipOoc && containsOocMarkerAnywhere(cleaned))) continue
+      const normalized = normalizedMemoryText(cleaned)
+      if (!normalized || seen.has(normalized)) continue
+      const sample = normalized.slice(0, Math.min(220, normalized.length))
+      if (sample.length >= 80 && recentNormalized.includes(sample)) continue
+      seen.add(normalized)
+      memories.push(compactText(cleaned, 4200))
+    }
+
+    let rawEntities = Array.isArray(result?.entityContext) ? result.entityContext : []
+    if (!rawEntities.length) {
+      try {
+        const listed = await spindle.memories.entities.list(chatId, { activeOnly: true, limit: 12, userId })
+        rawEntities = Array.isArray(listed) ? listed : []
+      } catch (err: any) {
+        spindle.log.warn(`Persona Paths Cortex entity fallback failed for ${chatId}: ${err?.message || String(err)}`)
+      }
+    }
+    const enrichedEntities = await Promise.all(rawEntities.slice(0, 12).map(async (entity: any) => {
+      const hasFacts = Array.isArray(entity?.facts) && entity.facts.length
+      const entityId = String(entity?.id || entity?.entityId || '')
+      if (hasFacts || !entityId) return entity
+      try {
+        const facts = await spindle.memories.entities.getFacts(entityId, userId)
+        return Array.isArray(facts) && facts.length ? { ...entity, facts } : entity
+      } catch {
+        return entity
+      }
+    }))
+    const entities = enrichedEntities.map(formatCortexEntity).filter(Boolean).slice(0, 12)
+
+    let relationships: string[] = []
+    const directRelationships = result?.relationshipContext ?? result?.relationships ?? result?.relations
+    if (Array.isArray(directRelationships)) {
+      relationships = directRelationships.map(formatCortexRelationship).filter(Boolean).slice(0, 12)
+    }
+    if (!relationships.length) {
+      const ids = rawEntities.map((entity: any) => String(entity?.id || entity?.entityId || '')).filter(Boolean).slice(0, 10)
+      if (ids.length) {
+        try {
+          const rels = await spindle.memories.relations.forEntities(chatId, ids, { limit: 12, userId })
+          relationships = (Array.isArray(rels) ? rels : []).map(formatCortexRelationship).filter(Boolean).slice(0, 12)
+        } catch (err: any) {
+          spindle.log.warn(`Persona Paths Cortex relationship fallback failed for ${chatId}: ${err?.message || String(err)}`)
+        }
+      }
+    }
+
+    let arc = formatCortexArc(result?.arcContext)
+    if (!arc) {
+      try {
+        arc = formatCortexArc(await spindle.memories.consolidations.latestArc(chatId, userId))
+      } catch (err: any) {
+        spindle.log.warn(`Persona Paths Cortex arc fallback failed for ${chatId}: ${err?.message || String(err)}`)
+      }
+    }
+
+    if (!memories.length && !entities.length && !relationships.length && !arc) {
+      spindle.log.info(`Persona Paths Memory Cortex returned no usable context for ${chatId}; trying chat-memory fallback.`)
+      return retrieveChatMemoryFallback(chatId, userId, allMessages, oocMessageIds, recentSceneStartIndex)
+    }
+
+    spindle.log.info(`Persona Paths Memory Cortex for ${chatId}: ${memories.length} memories, ${entities.length} entities, ${relationships.length} relationships, arc=${arc ? 'yes' : 'no'}.`)
+    return {
+      source: 'cortex', memories, entities, relationships, arc,
+      note: 'Read-only context retrieved from Lumiverse Memory Cortex.',
+    }
+  } catch (err: any) {
+    spindle.log.warn(`Persona Paths Memory Cortex lookup failed for ${chatId}; trying chat-memory fallback: ${err?.message || String(err)}`)
+    return retrieveChatMemoryFallback(chatId, userId, allMessages, oocMessageIds, recentSceneStartIndex)
   }
 }
 
@@ -530,11 +712,11 @@ CORE CHARACTERIZATION RULES
 - Role-play the PLAYER PERSONA faithfully. Do not optimize for politeness, niceness, cooperation, safety, or generic social desirability unless those traits are actually appropriate here.
 - Personality is contextual, not a bag of averaged adjectives. A brash person can be gentle with one lover, hostile to strangers, deferential to one mentor, playful with a friend, and vicious with an enemy without becoming a generic middle-ground personality.
 - Do NOT average contradictory traits into a bland compromise.
-- Characterization priority: (1) current scene and current emotional state, (2) demonstrated behavior toward the person currently involved, (3) established relationship with that person, including relevant earlier story history, (4) the player's recent demonstrated portrayal, (5) persona description, (6) generic assumptions.
+- Characterization priority: (1) current scene and current emotional state, (2) demonstrated behavior toward the person currently involved, (3) established relationship with that person, including relevant Memory Cortex history, (4) the player's recent demonstrated portrayal, (5) persona description, (6) generic assumptions.
 - A relationship can change HOW a trait is expressed without deleting the underlying trait.
 - Recent behavior can override stale relationship notes. Treat private relationship memory as a hint, never an authority.
-- Relevant earlier story history is continuity evidence: use it to remember established facts, promises, secrets, prior decisions, injuries, locations, relationship changes, and unresolved plot threads. Never let an older retrieved memory override a clearly newer event in the CURRENT ROLE-PLAY SCENE.
-- If retrieved history conflicts with the current scene, trust the current scene. Do not resurrect obsolete states merely because they were semantically retrieved.
+- Memory Cortex context is continuity evidence: use it to remember established facts, promises, secrets, prior decisions, injuries, locations, relationship changes, entity facts, active narrative arcs, and unresolved plot threads. Never let an older retrieved memory override a clearly newer event in the CURRENT ROLE-PLAY SCENE.
+- If Memory Cortex or fallback history conflicts with the current scene, trust the current scene. Treat retrieved memories, entities, relations, and arc summaries as evidence that may lag behind the newest turn.
 
 CHOICE QUALITY RULES
 - These are meaningful courses of action, not four alternate quips.
@@ -594,12 +776,12 @@ function buildUserPrompt(args: {
   memoryNotes: string[]
   recentUserTurns: any[]
   sceneMessages: any[]
-  storyMemories: string[]
+  storyMemory: StoryMemoryContext
   globalInstructions: string
   regenerationGuidance?: string
   rejectedChoices?: Choice[]
 }) {
-  const { persona, personaOverride, memoryNotes, recentUserTurns, sceneMessages, storyMemories, globalInstructions, regenerationGuidance = '', rejectedChoices = [] } = args
+  const { persona, personaOverride, memoryNotes, recentUserTurns, sceneMessages, storyMemory, globalInstructions, regenerationGuidance = '', rejectedChoices = [] } = args
   const personaBlock = persona
     ? `NAME: ${persona.name || 'Unnamed'}\nTITLE: ${persona.title || ''}\nDESCRIPTION:\n${compactText(persona.description || '(none)', 6000)}`
     : 'No active persona card is available. Infer the player character only from USER turns.'
@@ -626,8 +808,21 @@ GLOBAL EXTENSION GUIDANCE FROM THE HUMAN\n${globalInstructions.trim() || '(none)
 
 PRIVATE RELATIONSHIP MEMORY FROM PRIOR CYOA PASSES\n${memoryNotes.length ? memoryNotes.map(x => `- ${x}`).join('\n') : '(none yet)'}
 
-RELEVANT EARLIER STORY HISTORY RETRIEVED BY LUMIVERSE\n${storyMemories.length ? storyMemories.map((x, i) => `STORY MEMORY ${i + 1}:\n${x}`).join('\n\n') : '(none available — rely on the current scene and persona evidence)'}
-Use these older excerpts for continuity only. They may be incomplete or stale. The CURRENT ROLE-PLAY SCENE below is authoritative when anything conflicts.
+LUMIVERSE STORY MEMORY SOURCE
+${storyMemory.source === 'cortex' ? 'Memory Cortex (preferred)' : storyMemory.source === 'chat_memory' ? 'Long-term chat-memory fallback' : 'None available'}${storyMemory.note ? `\n${storyMemory.note}` : ''}
+
+MEMORY CORTEX / EARLIER STORY EVENTS
+${storyMemory.memories.length ? storyMemory.memories.map((x, i) => `MEMORY ${i + 1}:\n${x}`).join('\n\n') : '(none retrieved)'}
+
+MEMORY CORTEX ENTITY CONTEXT
+${storyMemory.entities.length ? storyMemory.entities.map((x, i) => `ENTITY ${i + 1}:\n${x}`).join('\n\n') : '(none retrieved)'}
+
+MEMORY CORTEX RELATIONSHIP CONTEXT
+${storyMemory.relationships.length ? storyMemory.relationships.map((x, i) => `RELATIONSHIP ${i + 1}:\n${x}`).join('\n\n') : '(none retrieved)'}
+
+MEMORY CORTEX ACTIVE NARRATIVE ARC
+${storyMemory.arc || '(none retrieved)'}
+Use all memory material for continuity only. It may be incomplete or stale. The CURRENT ROLE-PLAY SCENE below is authoritative when anything conflicts.
 
 RECENT EXAMPLES OF HOW THE HUMAN ACTUALLY PLAYS THIS PERSONA\n${userExamples}
 
@@ -712,7 +907,7 @@ async function generatePaths(args: {
   memoryNotes: string[]
   recentUserTurns: any[]
   sceneMessages: any[]
-  storyMemories: string[]
+  storyMemory: StoryMemoryContext
   regenerationGuidance?: string
   rejectedChoices?: Choice[]
 }, userId?: string) {
@@ -915,12 +1110,14 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
     const recentSceneStartIndex = firstSceneMessageId
       ? messages.findIndex((m: any) => String(m?.id || '') === firstSceneMessageId)
       : -1
-    const storyMemory = await retrieveLongTermStoryMemory(
+    const storyMemory = await retrieveStoryMemoryContext(
       chatId,
       userId,
       messages,
       oocMessageIds,
       recentSceneStartIndex,
+      sceneMessages,
+      persona,
     )
 
     const prismInfo = await resolvePrismInfo(chatId, userId, persona, throughTarget)
@@ -931,7 +1128,7 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
       memoryNotes,
       recentUserTurns,
       sceneMessages,
-      storyMemories: storyMemory.chunks,
+      storyMemory,
       regenerationGuidance: cleanGuidance,
       rejectedChoices,
     }, userId)
@@ -977,6 +1174,7 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
 
 async function sendState(userId?: string) {
   const generationGranted = spindle.permissions.has('generation')
+  const memoriesGranted = spindle.permissions.has('memories')
   let connections: any[] = []
   let connectionError = ''
 
@@ -1024,6 +1222,7 @@ async function sendState(userId?: string) {
     config,
     connections,
     generationGranted,
+    memoriesGranted,
     connectionError,
     personaError,
     prismInfo,
@@ -1185,6 +1384,8 @@ spindle.permissions.onChanged(({ permission }) => {
   // button/get_state request provides the frontend user's scope safely.
   if (permission === 'generation') {
     spindle.log.info('Persona Paths generation permission changed; refresh the panel to reload connections.')
+  } else if (permission === 'memories') {
+    spindle.log.info('Persona Paths Memory Cortex permission changed; refresh the panel to update Cortex status.')
   }
 })
 

@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.21';
+const EXT_VERSION = '0.1.22';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -826,19 +826,22 @@ export function setup(ctx) {
     recentUserExamples.addEventListener('change', () => scheduleSave({ recentUserExamples: Number(recentUserExamples.value) }, 0));
     const storyMemoryChunks = ctx.dom.createElement('input', { type: 'number', min: '1', max: '12', step: '1' });
     storyMemoryChunks.addEventListener('change', () => scheduleSave({ storyMemoryChunks: Number(storyMemoryChunks.value) }, 0));
-    grid2.append(createLabeledField(ctx, 'Scene messages', contextMessages, 'Recent story context sent verbatim to the CYOA model. Current-scene evidence always outranks older memories.'), createLabeledField(ctx, 'Your portrayal examples', recentUserExamples, 'Recent USER turns used to learn how you actually play the persona.'), createLabeledField(ctx, 'Relevant story memories', storyMemoryChunks, 'How many older semantically relevant Lumiverse chat-memory chunks Persona Paths may add. Default: 6.'));
+    grid2.append(createLabeledField(ctx, 'Scene messages', contextMessages, 'Recent story context sent verbatim to the CYOA model. Current-scene evidence always outranks older memories.'), createLabeledField(ctx, 'Your portrayal examples', recentUserExamples, 'Recent USER turns used to learn how you actually play the persona.'), createLabeledField(ctx, 'Cortex story memories', storyMemoryChunks, 'How many top-ranked Memory Cortex memories Persona Paths may add. Entity, relationship, and narrative-arc context are retrieved separately when available. Default: 6.'));
     settings.appendChild(grid2);
     const longTermStoryMemoryToggle = ctx.dom.createElement('input', { type: 'checkbox' });
     const longTermStoryMemoryLabel = ctx.dom.createElement('label', { class: 'pp-check' });
-    longTermStoryMemoryLabel.append(longTermStoryMemoryToggle, document.createTextNode('Use Lumiverse long-term story memory'));
+    longTermStoryMemoryLabel.append(longTermStoryMemoryToggle, document.createTextNode('Use Lumiverse Memory Cortex'));
     longTermStoryMemoryToggle.addEventListener('change', () => {
         storyMemoryChunks.disabled = !longTermStoryMemoryToggle.checked;
         scheduleSave({ longTermStoryMemory: longTermStoryMemoryToggle.checked }, 0);
     });
     settings.appendChild(longTermStoryMemoryLabel);
     const longTermStoryMemoryHint = ctx.dom.createElement('div', { class: 'pp-hint' });
-    longTermStoryMemoryHint.textContent = 'Retrieves relevant older RP chunks from Lumiverse’s existing chat-memory/vector system. If chat memory is unavailable or still vectorizing, Persona Paths quietly falls back to the recent scene.';
+    longTermStoryMemoryHint.textContent = 'Cortex-first, read-only retrieval: relevant memories + entity context + relationships + active narrative arc. Requires Lumiverse’s Memories permission. If Cortex is unavailable, Persona Paths falls back to chat memory, then the recent scene.';
     settings.appendChild(longTermStoryMemoryHint);
+    const cortexStatus = ctx.dom.createElement('div', { class: 'pp-hint' });
+    cortexStatus.textContent = 'Checking Memory Cortex permission…';
+    settings.appendChild(cortexStatus);
     const relationshipMemoryToggle = ctx.dom.createElement('input', { type: 'checkbox' });
     const relationshipLabel = ctx.dom.createElement('label', { class: 'pp-check' });
     relationshipLabel.append(relationshipMemoryToggle, document.createTextNode('Keep private relationship memory'));
@@ -901,6 +904,9 @@ export function setup(ctx) {
         storyMemoryChunks.value = String(cfg.storyMemoryChunks ?? 6);
         longTermStoryMemoryToggle.checked = cfg.longTermStoryMemory !== false;
         storyMemoryChunks.disabled = !longTermStoryMemoryToggle.checked;
+        cortexStatus.textContent = state?.memoriesGranted
+            ? 'Memory Cortex permission granted. Persona Paths only performs read operations.'
+            : 'Memory Cortex permission not granted yet; Persona Paths will use chat-memory/recent-scene fallback until it is granted.';
         relationshipMemoryToggle.checked = cfg.relationshipMemory !== false;
         reasoningToggle.checked = !!cfg.useReasoning;
         modelOverride.value = cfg.modelOverride || '';

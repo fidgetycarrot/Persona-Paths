@@ -1,21 +1,23 @@
 # Persona Paths
 
-## v0.1.21 — Long-term story memory
+## v0.1.22 — Memory Cortex context
 
-Persona Paths now supplements its recent scene window with Lumiverse's existing semantic chat-memory retrieval. Before generating choices, it asks `spindle.chats.getMemories()` for relevant older chunks from the same role-play and gives those excerpts to the CYOA model as continuity evidence.
+Persona Paths now uses Lumiverse Memory Cortex as its preferred long-term continuity source. For each Paths generation it performs a read-only Cortex query built from the current scene and asks for relevant older memories with relationship and consolidation context enabled. It also consumes Cortex entity context and the active narrative arc when available.
 
-The current scene remains authoritative. Older retrieved memories are explicitly treated as potentially stale, and chunks that overlap the immediate scene are discarded when Lumiverse provides chunk indexes. When the OOC guard is enabled, retrieved chunks that overlap known OOC turns are also excluded.
+The current scene remains authoritative. Cortex material is treated as continuity evidence that can be stale, and obvious duplicates of the immediate scene are discarded. OOC-tagged memory text is excluded when the OOC guard is enabled.
 
-New settings:
-- **Use Lumiverse long-term story memory** — on by default.
-- **Relevant story memories** — default 6, configurable 1–12.
-- The recent **Scene messages** window remains separate and can now be set up to 40 messages.
+If the `memories` permission is not granted, Cortex returns no usable context, or a Cortex call fails, Persona Paths falls back to the previous Lumiverse chat-memory retrieval. If that is also unavailable, choice generation continues using the recent scene rather than failing.
 
-If Lumiverse chat memory is disabled, not configured, still vectorizing, or retrieval fails, Persona Paths quietly falls back to the recent scene rather than blocking choice generation.
+**Important:** Lumiverse's `memories` permission is broad, but Persona Paths v0.1.22 uses it read-only. It does not edit entities or relations, run consolidations, warm/rebuild memory, invalidate caches, create vaults, or otherwise mutate Cortex state.
+
+New/updated settings:
+- **Use Lumiverse Memory Cortex** — on by default.
+- **Cortex story memories** — default 6, configurable 1–12. Entity, relationship, and narrative-arc context are additional to this count.
+- The panel reports whether the Memory Cortex permission is currently granted.
 
 This release keeps the safe host-managed message-widget architecture from v0.1.20 and all prior Persona Paths features.
 
-Version 0.1.21
+Version 0.1.22
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -39,7 +41,7 @@ The editable TypeScript sources are also kept at root (`backend.ts`, `frontend.t
 
 - Hard context isolation: generated choices and private relationship notes are never appended to the RP chat or inserted into normal prompt assembly.
 - Persona fidelity using the active persona plus recent examples of how the player actually portrays them.
-- Long-term continuity via Lumiverse semantic chat-memory retrieval, while keeping the current scene authoritative.
+- Long-term continuity via Lumiverse Memory Cortex (memories, entities, relationships, narrative arc), with chat-memory fallback and the current scene always authoritative.
 - Relationship-conditioned behavior instead of averaging contradictory traits into generic behavior.
 - Action-first, detailed choices rather than four alternate quips.
 - Choices control only the player's persona; NPC reactions, discoveries, consequences, and world state remain with the story model.
@@ -66,7 +68,8 @@ Persona Paths requests only:
 
 - `generation`
 - `personas`
-- `chats` — resolves the active chat for manual generation
+- `chats` — resolves the active chat for manual generation and provides read-only chat-memory fallback
+- `memories` — read-only Memory Cortex retrieval (the permission itself is broader; Persona Paths does not mutate memory state)
 - `chat_mutation`
 - `ui_panels` — only for Lumiverse's native draggable floating launcher
 
