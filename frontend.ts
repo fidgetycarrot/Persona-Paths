@@ -1,6 +1,6 @@
 type Ctx = any
 
-const EXT_VERSION = '0.1.20'
+const EXT_VERSION = '0.1.21'
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`
 
 type Choice = { intent: string; title: string; text: string; advances_scene?: boolean }
@@ -841,15 +841,30 @@ export function setup(ctx: Ctx) {
   settings.appendChild(prismStatus)
 
   const grid2 = ctx.dom.createElement('div', { class: 'pp-grid' }) as HTMLElement
-  const contextMessages = ctx.dom.createElement('input', { type: 'number', min: '6', max: '30', step: '1' }) as HTMLInputElement
+  const contextMessages = ctx.dom.createElement('input', { type: 'number', min: '6', max: '40', step: '1' }) as HTMLInputElement
   contextMessages.addEventListener('change', () => scheduleSave({ contextMessages: Number(contextMessages.value) }, 0))
   const recentUserExamples = ctx.dom.createElement('input', { type: 'number', min: '2', max: '12', step: '1' }) as HTMLInputElement
   recentUserExamples.addEventListener('change', () => scheduleSave({ recentUserExamples: Number(recentUserExamples.value) }, 0))
+  const storyMemoryChunks = ctx.dom.createElement('input', { type: 'number', min: '1', max: '12', step: '1' }) as HTMLInputElement
+  storyMemoryChunks.addEventListener('change', () => scheduleSave({ storyMemoryChunks: Number(storyMemoryChunks.value) }, 0))
   grid2.append(
-    createLabeledField(ctx, 'Scene messages', contextMessages, 'Recent story context sent only to the CYOA model.'),
+    createLabeledField(ctx, 'Scene messages', contextMessages, 'Recent story context sent verbatim to the CYOA model. Current-scene evidence always outranks older memories.'),
     createLabeledField(ctx, 'Your portrayal examples', recentUserExamples, 'Recent USER turns used to learn how you actually play the persona.'),
+    createLabeledField(ctx, 'Relevant story memories', storyMemoryChunks, 'How many older semantically relevant Lumiverse chat-memory chunks Persona Paths may add. Default: 6.'),
   )
   settings.appendChild(grid2)
+
+  const longTermStoryMemoryToggle = ctx.dom.createElement('input', { type: 'checkbox' }) as HTMLInputElement
+  const longTermStoryMemoryLabel = ctx.dom.createElement('label', { class: 'pp-check' }) as HTMLLabelElement
+  longTermStoryMemoryLabel.append(longTermStoryMemoryToggle, document.createTextNode('Use Lumiverse long-term story memory'))
+  longTermStoryMemoryToggle.addEventListener('change', () => {
+    storyMemoryChunks.disabled = !longTermStoryMemoryToggle.checked
+    scheduleSave({ longTermStoryMemory: longTermStoryMemoryToggle.checked }, 0)
+  })
+  settings.appendChild(longTermStoryMemoryLabel)
+  const longTermStoryMemoryHint = ctx.dom.createElement('div', { class: 'pp-hint' }) as HTMLElement
+  longTermStoryMemoryHint.textContent = 'Retrieves relevant older RP chunks from Lumiverse’s existing chat-memory/vector system. If chat memory is unavailable or still vectorizing, Persona Paths quietly falls back to the recent scene.'
+  settings.appendChild(longTermStoryMemoryHint)
 
   const relationshipMemoryToggle = ctx.dom.createElement('input', { type: 'checkbox' }) as HTMLInputElement
   const relationshipLabel = ctx.dom.createElement('label', { class: 'pp-check' }) as HTMLLabelElement
@@ -919,6 +934,9 @@ export function setup(ctx: Ctx) {
     choiceCount.value = String(cfg.choiceCount ?? 4)
     contextMessages.value = String(cfg.contextMessages ?? 12)
     recentUserExamples.value = String(cfg.recentUserExamples ?? 6)
+    storyMemoryChunks.value = String(cfg.storyMemoryChunks ?? 6)
+    longTermStoryMemoryToggle.checked = cfg.longTermStoryMemory !== false
+    storyMemoryChunks.disabled = !longTermStoryMemoryToggle.checked
     relationshipMemoryToggle.checked = cfg.relationshipMemory !== false
     reasoningToggle.checked = !!cfg.useReasoning
     modelOverride.value = cfg.modelOverride || ''

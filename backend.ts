@@ -31,6 +31,8 @@ type Config = {
   connectionId: string
   modelOverride: string
   relationshipMemory: boolean
+  longTermStoryMemory: boolean
+  storyMemoryChunks: number
   useReasoning: boolean
   globalInstructions: string
   personaOverrides: Record<string, string>
@@ -68,6 +70,8 @@ const DEFAULT_CONFIG: Config = {
   connectionId: '',
   modelOverride: '',
   relationshipMemory: true,
+  longTermStoryMemory: true,
+  storyMemoryChunks: 6,
   useReasoning: false,
   globalInstructions: '',
   personaOverrides: {},
@@ -87,8 +91,10 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 function normalizeConfig(input: Partial<Config> | null | undefined): Config {
   const next = { ...DEFAULT_CONFIG, ...(input || {}) } as Config
   next.choiceCount = Math.round(clampNumber(next.choiceCount, 3, 6, DEFAULT_CONFIG.choiceCount))
-  next.contextMessages = Math.round(clampNumber(next.contextMessages, 6, 30, DEFAULT_CONFIG.contextMessages))
+  next.contextMessages = Math.round(clampNumber(next.contextMessages, 6, 40, DEFAULT_CONFIG.contextMessages))
   next.recentUserExamples = Math.round(clampNumber(next.recentUserExamples, 2, 12, DEFAULT_CONFIG.recentUserExamples))
+  next.storyMemoryChunks = Math.round(clampNumber(next.storyMemoryChunks, 1, 12, DEFAULT_CONFIG.storyMemoryChunks))
+  next.longTermStoryMemory = next.longTermStoryMemory !== false
   next.temperature = clampNumber(next.temperature, 0, 2, DEFAULT_CONFIG.temperature)
   next.maxTokens = Math.round(clampNumber(next.maxTokens, 500, 32000, DEFAULT_CONFIG.maxTokens))
   next.generationDelaySeconds = clampNumber(next.generationDelaySeconds, 0, 15, DEFAULT_CONFIG.generationDelaySeconds)
@@ -412,6 +418,102 @@ function adultContentInstruction(mode: Config['adultContent']) {
   return `${shared} Match the established scene's level of adult sexual explicitness. If the scene is already explicit, you may remain explicit without sanitizing it; if the scene is only romantic/suggestive or nonsexual, do not artificially escalate it.`
 }
 
+
+function memoryChunkRange(chunk: any) {
+  const meta = chunk?.metadata || {}
+  const start = Number(meta.startIndex ?? meta.start_index)
+  const end = Number(meta.endIndex ?? meta.end_index)
+  return {
+    start: Number.isFinite(start) ? start : null,
+    end: Number.isFinite(end) ? end : null,
+  }
+}
+
+function chunkOverlapsIndexSet(chunk: any, indexes: Set<number>) {
+  if (!indexes.size) return false
+  const range = memoryChunkRange(chunk)
+  if (range.start == null || range.end == null) return false
+  for (const index of indexes) {
+    if (index >= range.start && index <= range.end) return true
+  }
+  return false
+}
+
+function containsOocMarkerAnywhere(text: string) {
+  return /(?:^|\n)\s*(?:\[\s*ooc\s*[\]\}]\s*:?\s*|\(\s*ooc\s*\)\s*:?\s*|ooc\s*:)/i.test(String(text || ''))
+}
+
+async function retrieveLongTermStoryMemory(
+  chatId: string,
+  userId: string | undefined,
+  allMessages: any[],
+  oocMessageIds: Set<string>,
+  recentSceneStartIndex: number,
+) {
+  if (!config.longTermStoryMemory || !spindle.permissions.has('chats')) {
+    return { chunks: [] as string[], enabled: false, available: 0, pending: 0, retrievalMode: '' }
+  }
+
+  try {
+    // Ask for a few extras because we deliberately discard chunks that overlap
+    // the immediate scene or any OOC exchange.
+    const requested = Math.min(24, config.storyMemoryChunks + 4)
+    const result = await spindle.chats.getMemories(chatId, { topK: requested, userId })
+    if (!result?.enabled || !Array.isArray(result?.chunks) || !result.chunks.length) {
+      spindle.log.info(`Persona Paths long-term memory unavailable for ${chatId}: enabled=${!!result?.enabled}, available=${Number(result?.chunksAvailable || 0)}, pending=${Number(result?.chunksPending || 0)}`)
+      return {
+        chunks: [] as string[],
+        enabled: !!result?.enabled,
+        available: Number(result?.chunksAvailable || 0),
+        pending: Number(result?.chunksPending || 0),
+        retrievalMode: String(result?.retrievalMode || ''),
+      }
+    }
+
+    const oocIndexes = new Set<number>()
+    for (let i = 0; i < allMessages.length; i += 1) {
+      if (oocMessageIds.has(String(allMessages[i]?.id || ''))) oocIndexes.add(i)
+    }
+
+    const seen = new Set<string>()
+    const chunks: string[] = []
+    for (const chunk of result.chunks) {
+      if (chunks.length >= config.storyMemoryChunks) break
+
+      const range = memoryChunkRange(chunk)
+      // Recent scene is already supplied verbatim below. Keep semantic retrieval
+      // focused on older continuity instead of duplicating the last few turns.
+      if (recentSceneStartIndex >= 0 && range.end != null && range.end >= recentSceneStartIndex) continue
+
+      // OOC/meta exchanges should remain invisible to Persona Paths even when
+      // Lumiverse's vector store happens to retrieve a chunk containing them.
+      if (config.skipOoc && chunkOverlapsIndexSet(chunk, oocIndexes)) continue
+
+      const cleaned = cleanRoleplayText(chunk?.content)
+      if (!cleaned) continue
+      if (config.skipOoc && containsOocMarkerAnywhere(cleaned)) continue
+
+      const normalized = cleaned.replace(/\s+/g, ' ').trim().toLowerCase()
+      if (!normalized || seen.has(normalized)) continue
+      seen.add(normalized)
+      chunks.push(compactText(cleaned, 4200))
+    }
+
+    spindle.log.info(`Persona Paths long-term story memory for ${chatId}: using ${chunks.length}/${result.count || result.chunks.length} retrieved chunks (${result.retrievalMode || 'unknown'} mode; available=${result.chunksAvailable || 0}, pending=${result.chunksPending || 0}).`)
+    return {
+      chunks,
+      enabled: true,
+      available: Number(result?.chunksAvailable || 0),
+      pending: Number(result?.chunksPending || 0),
+      retrievalMode: String(result?.retrievalMode || ''),
+    }
+  } catch (err: any) {
+    // Memory is context enhancement, never a reason to block CYOA generation.
+    spindle.log.warn(`Persona Paths long-term story memory lookup failed for ${chatId}; continuing with recent scene only: ${err?.message || String(err)}`)
+    return { chunks: [] as string[], enabled: false, available: 0, pending: 0, retrievalMode: '' }
+  }
+}
+
 function buildSystemPrompt(cfg: Config) {
   const requestedPov = cfg.pov === 'auto'
     ? 'Infer POV only from the player\'s recent USER turns. If ambiguous, use first person.'
@@ -428,9 +530,11 @@ CORE CHARACTERIZATION RULES
 - Role-play the PLAYER PERSONA faithfully. Do not optimize for politeness, niceness, cooperation, safety, or generic social desirability unless those traits are actually appropriate here.
 - Personality is contextual, not a bag of averaged adjectives. A brash person can be gentle with one lover, hostile to strangers, deferential to one mentor, playful with a friend, and vicious with an enemy without becoming a generic middle-ground personality.
 - Do NOT average contradictory traits into a bland compromise.
-- Characterization priority: (1) current scene and current emotional state, (2) demonstrated behavior toward the person currently involved, (3) established relationship with that person, (4) the player's recent demonstrated portrayal, (5) persona description, (6) generic assumptions.
+- Characterization priority: (1) current scene and current emotional state, (2) demonstrated behavior toward the person currently involved, (3) established relationship with that person, including relevant earlier story history, (4) the player's recent demonstrated portrayal, (5) persona description, (6) generic assumptions.
 - A relationship can change HOW a trait is expressed without deleting the underlying trait.
 - Recent behavior can override stale relationship notes. Treat private relationship memory as a hint, never an authority.
+- Relevant earlier story history is continuity evidence: use it to remember established facts, promises, secrets, prior decisions, injuries, locations, relationship changes, and unresolved plot threads. Never let an older retrieved memory override a clearly newer event in the CURRENT ROLE-PLAY SCENE.
+- If retrieved history conflicts with the current scene, trust the current scene. Do not resurrect obsolete states merely because they were semantically retrieved.
 
 CHOICE QUALITY RULES
 - These are meaningful courses of action, not four alternate quips.
@@ -490,11 +594,12 @@ function buildUserPrompt(args: {
   memoryNotes: string[]
   recentUserTurns: any[]
   sceneMessages: any[]
+  storyMemories: string[]
   globalInstructions: string
   regenerationGuidance?: string
   rejectedChoices?: Choice[]
 }) {
-  const { persona, personaOverride, memoryNotes, recentUserTurns, sceneMessages, globalInstructions, regenerationGuidance = '', rejectedChoices = [] } = args
+  const { persona, personaOverride, memoryNotes, recentUserTurns, sceneMessages, storyMemories, globalInstructions, regenerationGuidance = '', rejectedChoices = [] } = args
   const personaBlock = persona
     ? `NAME: ${persona.name || 'Unnamed'}\nTITLE: ${persona.title || ''}\nDESCRIPTION:\n${compactText(persona.description || '(none)', 6000)}`
     : 'No active persona card is available. Infer the player character only from USER turns.'
@@ -520,6 +625,9 @@ PERSONA-SPECIFIC GUIDANCE FROM THE HUMAN\n${personaOverride.trim() || '(none)'}
 GLOBAL EXTENSION GUIDANCE FROM THE HUMAN\n${globalInstructions.trim() || '(none)'}
 
 PRIVATE RELATIONSHIP MEMORY FROM PRIOR CYOA PASSES\n${memoryNotes.length ? memoryNotes.map(x => `- ${x}`).join('\n') : '(none yet)'}
+
+RELEVANT EARLIER STORY HISTORY RETRIEVED BY LUMIVERSE\n${storyMemories.length ? storyMemories.map((x, i) => `STORY MEMORY ${i + 1}:\n${x}`).join('\n\n') : '(none available — rely on the current scene and persona evidence)'}
+Use these older excerpts for continuity only. They may be incomplete or stale. The CURRENT ROLE-PLAY SCENE below is authoritative when anything conflicts.
 
 RECENT EXAMPLES OF HOW THE HUMAN ACTUALLY PLAYS THIS PERSONA\n${userExamples}
 
@@ -604,6 +712,7 @@ async function generatePaths(args: {
   memoryNotes: string[]
   recentUserTurns: any[]
   sceneMessages: any[]
+  storyMemories: string[]
   regenerationGuidance?: string
   rejectedChoices?: Choice[]
 }, userId?: string) {
@@ -801,6 +910,19 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
     const throughTarget = targetIndex >= 0 ? storyMessages.slice(0, targetIndex + 1) : storyMessages
     const sceneMessages = throughTarget.slice(-config.contextMessages)
     const recentUserTurns = throughTarget.filter((m: any) => m.role === 'user').slice(-config.recentUserExamples)
+
+    const firstSceneMessageId = String(sceneMessages[0]?.id || '')
+    const recentSceneStartIndex = firstSceneMessageId
+      ? messages.findIndex((m: any) => String(m?.id || '') === firstSceneMessageId)
+      : -1
+    const storyMemory = await retrieveLongTermStoryMemory(
+      chatId,
+      userId,
+      messages,
+      oocMessageIds,
+      recentSceneStartIndex,
+    )
+
     const prismInfo = await resolvePrismInfo(chatId, userId, persona, throughTarget)
 
     const result = await generatePaths({
@@ -809,6 +931,7 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
       memoryNotes,
       recentUserTurns,
       sceneMessages,
+      storyMemories: storyMemory.chunks,
       regenerationGuidance: cleanGuidance,
       rejectedChoices,
     }, userId)

@@ -1,14 +1,21 @@
 # Persona Paths
 
-## v0.1.20 — Safe message-widget compatibility hotfix
+## v0.1.21 — Long-term story memory
 
-This release removes direct Persona Paths card injection from Lumiverse message DOM entirely. Per-message Paths now render through Lumiverse's host-managed `ctx.messages.renderWidget()` API, which isolates the card in an auto-sizing sandbox frame and prevents Persona Paths CSS/layout from participating in Lumiverse's message flex/virtualization layout.
+Persona Paths now supplements its recent scene window with Lumiverse's existing semantic chat-memory retrieval. Before generating choices, it asks `spindle.chats.getMemories()` for relevant older chunks from the same role-play and gives those excerpts to the CYOA model as continuity evidence.
 
-It also proactively retires mounted legacy Persona Paths direct-DOM injections from v0.1.19 and earlier when the extension starts.
+The current scene remains authoritative. Older retrieved memories are explicitly treated as potentially stale, and chunks that overlap the immediate scene are discarded when Lumiverse provides chunk indexes. When the OOC guard is enabled, retrieved chunks that overlap known OOC turns are also excluded.
 
-All Persona Paths behavior from v0.1.18/v0.1.19 remains: scene-advancer choice, sparse italic inner thoughts, Prism integration/manual color, guided regeneration, OOC guard, delayed generation, manual run, and private persona/relationship context.
+New settings:
+- **Use Lumiverse long-term story memory** — on by default.
+- **Relevant story memories** — default 6, configurable 1–12.
+- The recent **Scene messages** window remains separate and can now be set up to 40 messages.
 
-Version 0.1.20
+If Lumiverse chat memory is disabled, not configured, still vectorizing, or retrieval fails, Persona Paths quietly falls back to the recent scene rather than blocking choice generation.
+
+This release keeps the safe host-managed message-widget architecture from v0.1.20 and all prior Persona Paths features.
+
+Version 0.1.21
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -32,6 +39,7 @@ The editable TypeScript sources are also kept at root (`backend.ts`, `frontend.t
 
 - Hard context isolation: generated choices and private relationship notes are never appended to the RP chat or inserted into normal prompt assembly.
 - Persona fidelity using the active persona plus recent examples of how the player actually portrays them.
+- Long-term continuity via Lumiverse semantic chat-memory retrieval, while keeping the current scene authoritative.
 - Relationship-conditioned behavior instead of averaging contradictory traits into generic behavior.
 - Action-first, detailed choices rather than four alternate quips.
 - Choices control only the player's persona; NPC reactions, discoveries, consequences, and world state remain with the story model.
