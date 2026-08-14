@@ -1,23 +1,14 @@
 # Persona Paths
 
-## v0.1.22 — Memory Cortex context
+## v0.1.23 — Multi-Path composer combining
 
-Persona Paths now uses Lumiverse Memory Cortex as its preferred long-term continuity source. For each Paths generation it performs a read-only Cortex query built from the current scene and asks for relevant older memories with relationship and consolidation context enabled. It also consumes Cortex entity context and the active narrative arc when available.
+Path clicks now append to the Lumiverse composer instead of replacing its contents. The first clicked Path fills an empty composer; additional Paths are added after a clean blank line, allowing two or more options to be combined without another LLM call. Existing manual edits in the composer are preserved.
 
-The current scene remains authoritative. Cortex material is treated as continuity evidence that can be stale, and obvious duplicates of the immediate scene are discarded. OOC-tagged memory text is excluded when the OOC guard is enabled.
+This is deliberately deterministic and fast: Persona Paths does not rewrite or model-merge combined choices. You can edit the combined turn normally before sending it.
 
-If the `memories` permission is not granted, Cortex returns no usable context, or a Cortex call fails, Persona Paths falls back to the previous Lumiverse chat-memory retrieval. If that is also unavailable, choice generation continues using the recent scene rather than failing.
+This release includes the Memory Cortex context system from v0.1.22 and keeps the host-managed message-widget architecture.
 
-**Important:** Lumiverse's `memories` permission is broad, but Persona Paths v0.1.22 uses it read-only. It does not edit entities or relations, run consolidations, warm/rebuild memory, invalidate caches, create vaults, or otherwise mutate Cortex state.
-
-New/updated settings:
-- **Use Lumiverse Memory Cortex** — on by default.
-- **Cortex story memories** — default 6, configurable 1–12. Entity, relationship, and narrative-arc context are additional to this count.
-- The panel reports whether the Memory Cortex permission is currently granted.
-
-This release keeps the safe host-managed message-widget architecture from v0.1.20 and all prior Persona Paths features.
-
-Version 0.1.22
+Version 0.1.23
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -50,7 +41,7 @@ The editable TypeScript sources are also kept at root (`backend.ts`, `frontend.t
 - Separate Lumiverse LLM connection and optional model override.
 - Private relationship memory.
 - Swipe-aware choice regeneration.
-- Click-to-fill composer without auto-send.
+- Click-to-append composer without auto-send, allowing multiple Paths to be combined in one user turn.
 
 ## Opening Persona Paths
 

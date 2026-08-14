@@ -1,6 +1,6 @@
 type Ctx = any
 
-const EXT_VERSION = '0.1.22'
+const EXT_VERSION = '0.1.23'
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`
 
 type Choice = { intent: string; title: string; text: string; advances_scene?: boolean }
@@ -33,6 +33,14 @@ function setNativeValue(el: HTMLTextAreaElement | HTMLInputElement, value: strin
   else (el as any).value = value
 }
 
+function appendPathText(current: string, addition: string) {
+  const existing = String(current || '').replace(/[ \t]+$/gm, '').trimEnd()
+  const next = String(addition || '').trim()
+  if (!next) return existing
+  if (!existing) return next
+  return `${existing}\n\n${next}`
+}
+
 async function fillComposer(text: string) {
   const selectors = [
     '[data-component="InputArea"] textarea[name="chat-message"]',
@@ -42,16 +50,27 @@ async function fillComposer(text: string) {
   ]
   const el = selectors.map(s => document.querySelector(s)).find(Boolean) as HTMLElement | null
   if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
-    setNativeValue(el, text)
+    const combined = appendPathText(el.value, text)
+    setNativeValue(el, combined)
     el.dispatchEvent(new Event('input', { bubbles: true }))
     el.dispatchEvent(new Event('change', { bubbles: true }))
     el.focus()
+    try { el.setSelectionRange(combined.length, combined.length) } catch {}
     return true
   }
   if (el && el.getAttribute('contenteditable') === 'true') {
-    el.textContent = text
+    const combined = appendPathText(el.textContent || '', text)
+    el.textContent = combined
     el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }))
     el.focus()
+    try {
+      const selection = window.getSelection()
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      range.collapse(false)
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+    } catch {}
     return true
   }
   try {
@@ -476,7 +495,7 @@ export function setup(ctx: Ctx) {
       }
       const body = document.createElement('span'); body.className = 'text'; renderRich(body, choice.text || '');
       button.append(top, body);
-      button.addEventListener('click', () => { post({ type:'choice', index }); showToast('Added to composer'); });
+      button.addEventListener('click', () => { post({ type:'choice', index }); showToast('Added · click another to combine'); });
       host.appendChild(button);
     });
   }
