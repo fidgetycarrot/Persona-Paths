@@ -397,7 +397,12 @@ function validateResult(result: any, expectedCount: number, detail: Config['deta
   for (let i = 0; i < choices.length; i += 1) {
     const c: any = choices[i] || {}
     if (!String(c.intent || '').trim()) issues.push(`choice ${i + 1} has no intent`)
-    if (!String(c.title || '').trim()) issues.push(`choice ${i + 1} has no title`)
+    const title = String(c.title || '').trim()
+    if (!title) issues.push(`choice ${i + 1} has no title`)
+    else {
+      const titleWords = title.split(/\s+/).filter(Boolean).length
+      if (titleWords > 5) issues.push(`choice ${i + 1} title is too long; use a 2–4 word scan label`)
+    }
     if (String(c.text || '').trim().length < minLength) issues.push(`choice ${i + 1} is too short`)
     const intent = String(c.intent || '').trim().toLowerCase()
     if (intent && intents.has(intent)) issues.push(`choice ${i + 1} repeats another intent`)
@@ -723,6 +728,8 @@ CHOICE QUALITY RULES
 - Every choice must contain a concrete non-dialogue action, physical decision, deliberate stillness, change of objective, or other story-moving behavior. Dialogue is optional and should support the choice rather than BE the entire choice.
 - Consider movement, leaving the scene, travel, investigation, preparation, physical interaction, escalation, retreat, concealment, waiting, observation, helping, refusing, changing objectives, interacting with the environment, or intentionally doing nothing when those are plausible.
 - The choices must differ in TRAJECTORY, not merely wording, tone, or punchline.
+- Each choice title is a SCAN LABEL, not a miniature summary of the first action. Make it 2–4 words whenever possible and describe the option's emotional/strategic direction, intent, or likely immediate trajectory at a glance. Include emotional stance when it materially distinguishes the option (for example: "Angry pushback", "Protective regroup", "Playful deflection", "Quiet withdrawal", "Commit to leaving", "Investigate carefully").
+- Do NOT use generic action-only titles such as "Move to the couch", "Ask a question", "Raid the fridge", or "Talk to Sovi" when a more informative intent label is possible. The player should be able to skip obviously wrong emotional directions by reading titles alone.
 - EXACTLY ONE choice must be the SCENE ADVANCER. Mark only that choice with "advances_scene": true; all other choices must use false.
 - The Scene Advancer must commit the persona to a meaningful next beat that materially changes the situation instead of merely continuing the current conversational/emotional loop. Examples include leaving or entering a place, beginning travel, starting or abandoning a task, initiating an investigation, making a decisive physical move, acting on a plan, changing the immediate objective, or otherwise creating a new state for the story model to respond to.
 - "Advance the scene" does NOT mean "be reckless", "escalate", or "invent a twist". It must remain plausible for this persona and moment, and it must still obey the authorship boundary below. A quiet departure, going to sleep, beginning preparations, or setting off down a trail can advance the scene when appropriate.
@@ -764,7 +771,7 @@ Return JSON only, with this exact shape:
     { "subject": "Elena", "notes": ["unusually patient", "protective", "still blunt and teasing"] }
   ],
   "choices": [
-    { "intent": "short unique trajectory", "title": "2–5 word UI title", "text": "paste-ready user turn", "advances_scene": false }
+    { "intent": "short unique trajectory", "title": "2–4 word emotional/strategic scan label", "text": "paste-ready user turn", "advances_scene": false }
   ]
 }
 No markdown. No commentary.`

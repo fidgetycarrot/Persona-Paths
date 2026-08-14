@@ -1,14 +1,14 @@
 # Persona Paths
 
-## v0.1.23 — Multi-Path composer combining
+## v0.1.24 — Intent-first scan labels
 
-Path clicks now append to the Lumiverse composer instead of replacing its contents. The first clicked Path fills an empty composer; additional Paths are added after a clean blank line, allowing two or more options to be combined without another LLM call. Existing manual edits in the composer are preserved.
+Choice titles are now explicitly generated as concise 2–4 word scan labels that describe each Path's emotional/strategic direction, intent, or immediate trajectory instead of merely repeating its first physical action. This makes a five-choice set skimmable before reading the full prose: labels such as `Angry pushback`, `Protective regroup`, `Quiet withdrawal`, or `Commit to leaving` should communicate the branch at a glance.
 
-This is deliberately deterministic and fast: Persona Paths does not rewrite or model-merge combined choices. You can edit the combined turn normally before sending it.
+The validator also rejects excessively long titles so repair generations are nudged back toward compact labels.
 
-This release includes the Memory Cortex context system from v0.1.22 and keeps the host-managed message-widget architecture.
+This release includes multi-Path composer combining from v0.1.23, Memory Cortex context from v0.1.22, and the host-managed message-widget architecture.
 
-Version 0.1.23
+Version 0.1.24
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
