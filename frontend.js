@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.24';
+const EXT_VERSION = '0.1.25';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -30,14 +30,58 @@ function appendPathText(current, addition) {
         return next;
     return `${existing}\n\n${next}`;
 }
-async function fillComposer(text) {
+function findComposerElement() {
     const selectors = [
         '[data-component="InputArea"] textarea[name="chat-message"]',
         '[data-component="InputArea"] textarea',
         'textarea[name="chat-message"]',
         '[data-component="InputArea"] [contenteditable="true"]',
     ];
-    const el = selectors.map(s => document.querySelector(s)).find(Boolean);
+    return selectors.map(s => document.querySelector(s)).find(Boolean);
+}
+function getComposerText() {
+    const el = findComposerElement();
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement)
+        return String(el.value || '');
+    if (el && el.getAttribute('contenteditable') === 'true')
+        return String(el.textContent || '');
+    return '';
+}
+function replaceComposer(text) {
+    const el = findComposerElement();
+    const next = String(text || '').trim();
+    if (!el || !next)
+        return false;
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+        setNativeValue(el, next);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.focus();
+        try {
+            el.setSelectionRange(next.length, next.length);
+        }
+        catch { }
+        return true;
+    }
+    if (el.getAttribute('contenteditable') === 'true') {
+        el.textContent = next;
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: next }));
+        el.focus();
+        try {
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false);
+            selection?.removeAllRanges();
+            selection?.addRange(range);
+        }
+        catch { }
+        return true;
+    }
+    return false;
+}
+async function fillComposer(text) {
+    const el = findComposerElement();
     if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
         const combined = appendPathText(el.value, text);
         setNativeValue(el, combined);
@@ -401,6 +445,7 @@ export function setup(ctx) {
       <span class="style" id="style"></span>
       <span class="toast" id="toast">Added to composer</span>
       <span class="spacer"></span>
+      <button type="button" class="icon" id="polishBtn" title="Polish the current composer draft" aria-label="Polish current draft">✦</button>
       <button type="button" class="icon" id="guideBtn" title="Regenerate with guidance" aria-label="Regenerate with guidance">✎</button>
       <button type="button" class="icon" id="regenBtn" title="Regenerate choices" aria-label="Regenerate choices">↻</button>
     </div>
@@ -423,6 +468,7 @@ export function setup(ctx) {
   const style = document.getElementById('style');
   const toast = document.getElementById('toast');
   const guide = document.getElementById('guide');
+  const polishBtn = document.getElementById('polishBtn');
   const guideBtn = document.getElementById('guideBtn');
   const regenBtn = document.getElementById('regenBtn');
   const color = /^#[0-9A-F]{6}$/i.test(model.prismColor || '') ? model.prismColor : '';
@@ -469,13 +515,13 @@ export function setup(ctx) {
   }
 
   if (model.mode === 'loading') {
-    guideBtn.hidden = true; regenBtn.hidden = true;
+    polishBtn.hidden = true; guideBtn.hidden = true; regenBtn.hidden = true;
     const row = document.createElement('div'); row.className = 'loading';
     const dot = document.createElement('span'); dot.className = 'dot';
     const label = document.createElement('span'); label.textContent = 'Reading the scene…';
     row.append(dot, label); host.appendChild(row);
   } else if (model.mode === 'error') {
-    guideBtn.hidden = true; regenBtn.hidden = true;
+    polishBtn.hidden = true; guideBtn.hidden = true; regenBtn.hidden = true;
     const msg = document.createElement('div'); msg.className = 'error'; msg.textContent = 'Couldn’t generate choices. ' + (model.error || 'Unknown error');
     const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'btn'; retry.style.marginTop = '8px'; retry.textContent = 'Retry';
     retry.addEventListener('click', () => post({ type:'retry' }));
@@ -497,6 +543,7 @@ export function setup(ctx) {
     });
   }
 
+  polishBtn.addEventListener('click', () => { post({ type:'rewrite' }); showToast('Polishing draft…'); });
   regenBtn.addEventListener('click', () => post({ type:'regenerate' }));
   guideBtn.addEventListener('click', () => {
     guide.hidden = !guide.hidden; resize();
@@ -524,6 +571,15 @@ export function setup(ctx) {
                     const choice = data?.choices?.[index];
                     if (choice)
                         await fillComposer(choice.text);
+                    return;
+                }
+                if (type === 'rewrite') {
+                    const draft = getComposerText().trim();
+                    if (!draft) {
+                        ctx.sendToBackend({ type: 'rewrite_draft', chatId, messageId, draft: '' });
+                        return;
+                    }
+                    ctx.sendToBackend({ type: 'rewrite_draft', chatId, messageId, draft });
                     return;
                 }
                 if (type === 'regenerate' || type === 'retry') {
@@ -693,6 +749,8 @@ export function setup(ctx) {
     // browser refresh/update when no old Persona Paths retry card is mounted.
     let manualAction = null;
     let unsubManualAction = () => { };
+    let polishAction = null;
+    let unsubPolishAction = () => { };
     const settings = ctx.dom.createElement('div', { class: 'pp-settings' });
     tab.root.appendChild(settings);
     const heading = ctx.dom.createElement('h3');
@@ -741,6 +799,21 @@ export function setup(ctx) {
             enabled: true,
         });
         unsubManualAction = manualAction.onClick(triggerManualGeneration);
+    }
+    catch { }
+    // Draft Polish works on whatever is currently in the composer, including a
+    // selected Path plus the user's own edits or several combined Paths.
+    try {
+        polishAction = ctx.ui.registerInputBarAction({
+            id: 'polish-persona-paths-draft',
+            label: 'Polish Draft with Persona Paths',
+            iconSvg: PATHS_ICON,
+            enabled: true,
+        });
+        unsubPolishAction = polishAction.onClick(() => {
+            const draft = getComposerText().trim();
+            ctx.sendToBackend({ type: 'manual_rewrite_latest', draft });
+        });
     }
     catch { }
     const connectionSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' });
@@ -1026,6 +1099,14 @@ export function setup(ctx) {
             manualStatus.classList.add('error');
             manualStatus.textContent = String(payload.error || 'Manual Persona Paths generation failed.');
         }
+        else if (payload.type === 'draft_rewrite_ready') {
+            const text = String(payload.text || '').trim();
+            if (text)
+                replaceComposer(text);
+        }
+        else if (payload.type === 'draft_rewrite_error') {
+            console.error('[Persona Paths] Draft polish failed:', String(payload.error || 'Unknown error'));
+        }
         else if (payload.type === 'request_error') {
             connectionStatus.classList.add('error');
             connectionStatus.textContent = String(payload.error || 'Persona Paths backend request failed.');
@@ -1202,6 +1283,14 @@ export function setup(ctx) {
         catch { }
         try {
             manualAction?.destroy?.();
+        }
+        catch { }
+        try {
+            unsubPolishAction();
+        }
+        catch { }
+        try {
+            polishAction?.destroy?.();
         }
         catch { }
         try {

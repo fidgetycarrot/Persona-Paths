@@ -1,14 +1,12 @@
 # Persona Paths
 
-## v0.1.24 — Intent-first scan labels
+## v0.1.25 — Current-moment anchoring + Draft Polish
 
-Choice titles are now explicitly generated as concise 2–4 word scan labels that describe each Path's emotional/strategic direction, intent, or immediate trajectory instead of merely repeating its first physical action. This makes a five-choice set skimmable before reading the full prose: labels such as `Angry pushback`, `Protective regroup`, `Quiet withdrawal`, or `Commit to leaving` should communicate the branch at a glance.
+Fixes a continuity bug that could make Paths answer from an earlier beat inside a long assistant reply. Older builds truncated each scene message from the end, so the model could literally miss the newest physical state. v0.1.25 preserves the final portion of long replies, repeats the end of the newest assistant turn as a highest-priority **CURRENT MOMENT** block, and explicitly requires every Path to start from the final location/posture/state unless the Path itself changes it.
 
-The validator also rejects excessively long titles so repair generations are nudged back toward compact labels.
+Adds **Draft Polish**: use the ✦ button on a Persona Paths card (or `Polish Draft with Persona Paths` from Lumiverse's Extras menu) to rewrite whatever is currently in the composer. It is designed for a selected Path plus manual edits or multiple combined Paths. The rewrite preserves the human's decisions and added ideas, smooths seams/repetition, keeps persona voice/POV/tense, respects the final scene state, and does not invent NPC/world outcomes.
 
-This release includes multi-Path composer combining from v0.1.23, Memory Cortex context from v0.1.22, and the host-managed message-widget architecture.
-
-Version 0.1.24
+Version 0.1.25
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 

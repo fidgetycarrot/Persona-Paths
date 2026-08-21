@@ -142,6 +142,26 @@ function compactText(text, max = 3600) {
         return clean;
     return clean.slice(0, max) + '\n[…truncated…]';
 }
+// Story replies are chronological. For continuity-sensitive context, dropping the
+// tail is much more dangerous than dropping the middle because the tail contains
+// the persona's CURRENT location, posture, injuries, possessions, and immediate
+// situation. Preserve both ends and bias toward the newest/final portion.
+function compactTextPreserveEnds(text, max = 4800, tailRatio = 0.68) {
+    const clean = String(text || '').trim();
+    if (clean.length <= max)
+        return clean;
+    const marker = '\n[…middle truncated; final beat preserved…]\n';
+    const usable = Math.max(200, max - marker.length);
+    const tailSize = Math.max(120, Math.floor(usable * tailRatio));
+    const headSize = Math.max(80, usable - tailSize);
+    return clean.slice(0, headSize).trimEnd() + marker + clean.slice(-tailSize).trimStart();
+}
+function compactTailText(text, max = 5200) {
+    const clean = String(text || '').trim();
+    if (clean.length <= max)
+        return clean;
+    return `[…earlier part omitted; this is the END of the reply…]\n${clean.slice(-max)}`;
+}
 function normalizeHex(value) {
     const raw = String(value || '').trim();
     const short = raw.match(/^#?([0-9a-f]{3})$/i);
@@ -492,16 +512,21 @@ function formatCortexArc(arc) {
     return compactJson(arc, 3200);
 }
 function buildCortexQueryText(sceneMessages, persona) {
-    const recent = (sceneMessages || [])
-        .slice(-8)
-        .map((m) => {
+    const recentMessages = (sceneMessages || []).slice(-8);
+    const recent = recentMessages
+        .map((m, index) => {
         const role = m?.role === 'user' ? 'PLAYER' : 'STORY';
-        return `${role}: ${compactText(cleanRoleplayText(m?.content), 1100)}`;
+        const cleaned = cleanRoleplayText(m?.content);
+        const isNewest = index === recentMessages.length - 1;
+        const body = isNewest
+            ? compactTextPreserveEnds(cleaned, 2000, 0.76)
+            : compactTextPreserveEnds(cleaned, 1200, 0.58);
+        return `${role}: ${body}`;
     })
         .filter(Boolean)
         .join('\n\n');
     const personaName = String(persona?.name || '').trim();
-    return compactText(`Retrieve earlier story facts, promises, secrets, injuries, decisions, relationship changes, known information, unresolved threads, and prior events relevant to choosing what ${personaName || 'the player persona'} would plausibly do next. Prefer established continuity over generic similarity.\n\nCURRENT SCENE:\n${recent}`, 9000);
+    return compactTextPreserveEnds(`Retrieve earlier story facts, promises, secrets, injuries, decisions, relationship changes, known information, unresolved threads, and prior events relevant to choosing what ${personaName || 'the player persona'} would plausibly do next. Prefer established continuity over generic similarity. The END of the newest story reply defines the current physical state.\n\nCURRENT SCENE:\n${recent}`, 10000, 0.7);
 }
 async function retrieveChatMemoryFallback(chatId, userId, allMessages, oocMessageIds, recentSceneStartIndex) {
     if (!spindle.permissions.has('chats'))
@@ -670,6 +695,13 @@ CORE CHARACTERIZATION RULES
 - Memory Cortex context is continuity evidence: use it to remember established facts, promises, secrets, prior decisions, injuries, locations, relationship changes, entity facts, active narrative arcs, and unresolved plot threads. Never let an older retrieved memory override a clearly newer event in the CURRENT ROLE-PLAY SCENE.
 - If Memory Cortex or fallback history conflicts with the current scene, trust the current scene. Treat retrieved memories, entities, relations, and arc summaries as evidence that may lag behind the newest turn.
 
+CURRENT-MOMENT ANCHOR
+- The LATEST ASSISTANT REPLY is chronological. Events and physical changes near its END supersede earlier setup within that same reply.
+- Before writing choices, silently identify the player's FINAL location, body position, restraints/contact, held items, injuries, and ongoing action at the very end of the latest assistant reply.
+- Every choice must begin from that final state unless the choice's first explicit action changes it. Never reset the persona to an earlier beat merely because it appeared near the beginning of the assistant reply.
+- Example: if the assistant reply begins with the persona entering a room but ends with them being pushed into a chair, the choices begin with the persona IN THE CHAIR. A choice may then stand up, leave, struggle, stay seated, etc.; it may not act as though they are still at the doorway.
+- The dedicated CURRENT MOMENT block at the end of the user prompt has the highest continuity priority. Memory is background; the final beat is NOW.
+
 CHOICE QUALITY RULES
 - These are meaningful courses of action, not four alternate quips.
 - Every choice must contain a concrete non-dialogue action, physical decision, deliberate stillness, change of objective, or other story-moving behavior. Dialogue is optional and should support the choice rather than BE the entire choice.
@@ -731,7 +763,19 @@ function buildUserPrompt(args) {
     const userExamples = recentUserTurns.length
         ? recentUserTurns.map((m, i) => `USER EXAMPLE ${i + 1}:\n${compactText(cleanRoleplayText(m.content), 2600)}`).join('\n\n')
         : '(none)';
-    const scene = sceneMessages.map((m) => `${m.role === 'user' ? 'USER' : 'ASSISTANT'}:\n${compactText(cleanRoleplayText(m.content), 3400)}`).join('\n\n');
+    const newestIndex = sceneMessages.length - 1;
+    const scene = sceneMessages.map((m, i) => {
+        const cleaned = cleanRoleplayText(m.content);
+        const isNewestAssistant = i === newestIndex && m.role === 'assistant';
+        const body = isNewestAssistant
+            ? compactTextPreserveEnds(cleaned, 9000, 0.74)
+            : compactTextPreserveEnds(cleaned, 3600, 0.58);
+        return `${m.role === 'user' ? 'USER' : 'ASSISTANT'}:\n${body}`;
+    }).join('\n\n');
+    const latestAssistant = [...sceneMessages].reverse().find((m) => m?.role === 'assistant');
+    const currentMoment = latestAssistant
+        ? compactTailText(cleanRoleplayText(latestAssistant.content), 5200)
+        : '(No assistant reply was available.)';
     const guidance = String(regenerationGuidance || '').trim();
     const rejectedBlock = rejectedChoices.length
         ? rejectedChoices.slice(0, 8).map((choice, i) => `REJECTED PATH ${i + 1} — ${choice.title || choice.intent || 'Untitled'}:\n${compactText(cleanRoleplayText(choice.text), 1800)}`).join('\n\n')
@@ -767,7 +811,11 @@ RECENT EXAMPLES OF HOW THE HUMAN ACTUALLY PLAYS THIS PERSONA\n${userExamples}
 
 CURRENT ROLE-PLAY SCENE\n${scene}${regenerationBlock}
 
-Generate the next-move choices for the USER now. Current scene evidence outranks stale notes.`;
+CURRENT MOMENT — END OF THE LATEST ASSISTANT REPLY (HIGHEST PRIORITY)\n${currentMoment}
+
+Start every candidate from the physical and situational state that exists at the END of that block. Later events inside the latest reply supersede earlier ones. Do not continue from an earlier location, posture, action, or conversational beat unless the choice explicitly moves back there.
+
+Generate the next-move choices for the USER now. CURRENT MOMENT outranks the broader scene; the broader scene outranks retrieved memory.`;
 }
 async function resolveConnection(cfg, userId) {
     if (!spindle.permissions.has('generation')) {
@@ -957,6 +1005,144 @@ Generate the answer again from scratch. Return one corrected JSON object only. P
         tense: ['present', 'past'].includes(String(parsed.style?.tense)) ? String(parsed.style?.tense) : (config.tense === 'auto' ? 'present' : config.tense),
     };
     return parsed;
+}
+function buildDraftRewriteSystemPrompt(cfg) {
+    const requestedPov = cfg.pov === 'auto'
+        ? 'Preserve the POV/person used in the DRAFT. If the draft is ambiguous, infer it from recent USER turns.'
+        : `Keep the rewritten draft in ${cfg.pov} person unless the human deliberately wrote otherwise.`;
+    const requestedTense = cfg.tense === 'auto'
+        ? 'Preserve the tense used in the DRAFT. If ambiguous, infer it from recent USER turns.'
+        : `Keep the rewritten draft in ${cfg.tense} tense unless the human deliberately wrote otherwise.`;
+    return `You are Persona Paths Draft Polish. Rewrite a HUMAN PLAYER'S partially edited role-play response into one smooth, paste-ready USER turn.
+
+The human may have selected one or more Persona Paths suggestions, manually changed them, added new ideas, or written the whole draft themselves. Their draft is the authority for WHAT they intend to do.
+
+PRESERVATION RULES
+- Preserve every meaningful decision, action, intention, factual assertion, named person, destination, refusal, promise, emotional choice, and user-added idea in the draft unless it is an obvious duplicate caused by concatenating Paths.
+- Smooth transitions, remove accidental repetition, reconcile pronouns, and make combined fragments read like one naturally authored turn.
+- Do NOT replace the human's idea with a different or "better" choice. This is rewriting, not next-move generation.
+- Do NOT make the persona nicer, safer, calmer, more polite, more cautious, or more generic than the draft/persona establishes.
+- Do NOT invent other characters' dialogue, reactions, thoughts, decisions, consent, or future behavior.
+- Do NOT invent world outcomes, discoveries, success/failure, or time skips that the human did not write.
+- If the draft deliberately contains multiple sequential actions, preserve their order unless a tiny reorder is necessary for grammar/continuity and does not change intent.
+
+CONTINUITY
+- The END of the latest assistant reply defines the starting physical state. If that reply moves the persona from a doorway into a chair, the polished draft must begin from the chair unless the human's draft explicitly has them stand/move.
+- Memory Cortex is background continuity only. Current scene and the human's draft outrank memory.
+
+VOICE & FORMATTING
+- Match the persona's established voice and the human's recent portrayal.
+- ${requestedPov}
+- ${requestedTense}
+- Spoken dialogue must use “double curly quotation marks” (or straight double quotes if already present), never ‘single curly dialogue quotes’.
+- Direct inner thoughts are optional and rare; format them as *single-asterisk italics*, never quotation marks.
+- Preserve the draft's established explicitness rather than sanitizing or gratuitously escalating it.
+- Return ONLY the rewritten USER turn as plain Markdown text. No JSON, title, label, explanation, critique, notes, or quotation fence.`;
+}
+function buildDraftRewritePrompt(args) {
+    const personaBlock = args.persona
+        ? `NAME: ${args.persona.name || 'Unnamed'}\nTITLE: ${args.persona.title || ''}\nDESCRIPTION:\n${compactText(args.persona.description || '(none)', 6000)}`
+        : 'No active persona card is available. Infer the player persona from recent USER turns.';
+    const examples = args.recentUserTurns.length
+        ? args.recentUserTurns.map((m, i) => `USER EXAMPLE ${i + 1}:\n${compactTextPreserveEnds(cleanRoleplayText(m.content), 2200, 0.58)}`).join('\n\n')
+        : '(none)';
+    const newestIndex = args.sceneMessages.length - 1;
+    const scene = args.sceneMessages.map((m, i) => {
+        const cleaned = cleanRoleplayText(m.content);
+        const isNewestAssistant = i === newestIndex && m.role === 'assistant';
+        return `${m.role === 'user' ? 'USER' : 'ASSISTANT'}:\n${isNewestAssistant ? compactTextPreserveEnds(cleaned, 7600, 0.76) : compactTextPreserveEnds(cleaned, 2600, 0.58)}`;
+    }).join('\n\n');
+    const latestAssistant = [...args.sceneMessages].reverse().find((m) => m?.role === 'assistant');
+    const currentMoment = latestAssistant ? compactTailText(cleanRoleplayText(latestAssistant.content), 5000) : '(none)';
+    const memory = [
+        args.storyMemory.arc ? `ACTIVE ARC:\n${args.storyMemory.arc}` : '',
+        args.storyMemory.memories.length ? `RELEVANT HISTORY:\n${args.storyMemory.memories.slice(0, 5).map((x, i) => `${i + 1}. ${x}`).join('\n')}` : '',
+        args.storyMemory.relationships.length ? `RELATIONSHIPS:\n${args.storyMemory.relationships.slice(0, 6).join('\n')}` : '',
+    ].filter(Boolean).join('\n\n') || '(none retrieved)';
+    return `PLAYER PERSONA\n${personaBlock}
+
+PERSONA-SPECIFIC GUIDANCE\n${String(args.personaOverride || '').trim() || '(none)'}
+
+PRIVATE RELATIONSHIP NOTES\n${args.memoryNotes.length ? args.memoryNotes.map(x => `- ${x}`).join('\n') : '(none)'}
+
+RELEVANT MEMORY CORTEX CONTINUITY\n${memory}
+
+RECENT EXAMPLES OF THE HUMAN'S VOICE\n${examples}
+
+CURRENT ROLE-PLAY SCENE\n${scene}
+
+CURRENT MOMENT — END OF LATEST ASSISTANT REPLY\n${currentMoment}
+
+DRAFT TO POLISH — PRESERVE ITS INTENT AND CONTENT\n${String(args.draft || '').trim()}
+
+Rewrite that draft into one seamless USER turn. Preserve the human's choices and added ideas; fix prose, flow, duplicated seams, and voice only.`;
+}
+async function handleDraftRewrite(chatId, messageId, draft, userId) {
+    const cleanDraft = cleanGeneratedChoiceText(draft);
+    if (!cleanDraft)
+        throw new Error('Write or select something in the composer before using Polish Draft.');
+    if (!chatId || !messageId)
+        throw new Error('Persona Paths needs the current chat and assistant reply to polish this draft.');
+    const messages = await spindle.chat.getMessages(chatId);
+    const target = messages.find((m) => String(m?.id || '') === messageId);
+    if (!target || target.role !== 'assistant')
+        throw new Error('The assistant reply associated with this Persona Paths card is no longer available.');
+    const oocMessageIds = config.skipOoc ? collectOocMessageIds(messages) : new Set();
+    const persona = await spindle.personas.getActive(userId);
+    const personaId = persona?.id || 'no_persona';
+    const memoryKey = `${chatId}::${personaId}`;
+    const storedMemory = relationshipMemory[memoryKey];
+    const memoryNotes = config.relationshipMemory && storedMemory
+        ? Object.entries(storedMemory.subjects || {}).map(([subject, notes]) => `${subject}: ${(notes || []).join('; ')}`).slice(0, 12)
+        : [];
+    const storyMessages = messages.filter((m) => (m.role === 'user' || m.role === 'assistant') && (!config.skipOoc || !oocMessageIds.has(String(m.id || ''))));
+    const targetIndex = storyMessages.findIndex((m) => String(m?.id || '') === messageId);
+    const throughTarget = targetIndex >= 0 ? storyMessages.slice(0, targetIndex + 1) : storyMessages;
+    const sceneMessages = throughTarget.slice(-config.contextMessages);
+    const recentUserTurns = throughTarget.filter((m) => m.role === 'user').slice(-config.recentUserExamples);
+    const firstSceneMessageId = String(sceneMessages[0]?.id || '');
+    const recentSceneStartIndex = firstSceneMessageId
+        ? messages.findIndex((m) => String(m?.id || '') === firstSceneMessageId)
+        : -1;
+    const storyMemory = await retrieveStoryMemoryContext(chatId, userId, messages, oocMessageIds, recentSceneStartIndex, sceneMessages, persona);
+    const { conn } = await resolveConnection(config, userId);
+    const model = config.modelOverride.trim() || conn.model;
+    const tuning = buildGenerationTuning(conn, model, config, false);
+    if (!tuning.traits.isKimi && typeof tuning.params.temperature === 'number')
+        tuning.params.temperature = Math.min(Number(tuning.params.temperature), 0.6);
+    const request = {
+        provider: conn.provider,
+        model,
+        connection_id: conn.id,
+        userId,
+        messages: [
+            { role: 'system', content: buildDraftRewriteSystemPrompt(config) },
+            { role: 'user', content: buildDraftRewritePrompt({
+                    persona,
+                    personaOverride: persona?.id ? (config.personaOverrides[persona.id] || '') : '',
+                    memoryNotes,
+                    recentUserTurns,
+                    sceneMessages,
+                    storyMemory,
+                    draft: cleanDraft,
+                }) },
+        ],
+        parameters: tuning.params,
+    };
+    if (tuning.reasoning)
+        request.reasoning = tuning.reasoning;
+    const response = await spindle.generate.raw(request);
+    const raw = String(response?.content || '').trim();
+    if (!raw)
+        throw new Error(`Draft-polish model returned no final content${response?.finish_reason ? ` (finish reason: ${response.finish_reason})` : ''}.`);
+    const rewritten = cleanGeneratedChoiceText(stripFences(raw));
+    if (!rewritten)
+        throw new Error('Draft-polish model returned an empty rewrite.');
+    spindle.sendToFrontend({ type: 'draft_rewrite_ready', chatId, messageId, text: rewritten }, userId);
+    try {
+        spindle.toast.success('Draft polished.');
+    }
+    catch { }
 }
 async function handleAssistantMessage(chatId, messageId, force = false, userId, regenerationGuidance = '', saveAsPersonaGuidance = false) {
     if (!config.enabled && !force)
@@ -1239,6 +1425,51 @@ spindle.onFrontendMessage(async (payload, userId) => {
             if (!guidance)
                 throw new Error('Enter some guidance before regenerating Persona Paths.');
             await handleAssistantMessage(chatId, messageId, true, userId, guidance, saveAsPersonaGuidance);
+            return;
+        }
+        if (payload.type === 'rewrite_draft') {
+            const chatId = String(payload.chatId || '');
+            const messageId = String(payload.messageId || '');
+            const draft = String(payload.draft || '');
+            try {
+                await handleDraftRewrite(chatId, messageId, draft, userId);
+            }
+            catch (err) {
+                const message = err?.message || String(err);
+                spindle.log.error(`Persona Paths draft rewrite failed: ${message}`);
+                try {
+                    spindle.toast.error(message, { title: 'Draft Polish' });
+                }
+                catch { }
+                spindle.sendToFrontend({ type: 'draft_rewrite_error', chatId, messageId, error: message }, userId);
+            }
+            return;
+        }
+        if (payload.type === 'manual_rewrite_latest') {
+            const draft = String(payload.draft || '');
+            try {
+                if (!draft.trim())
+                    throw new Error('Write or select something in the composer before using Polish Draft.');
+                if (!spindle.permissions.has('chats'))
+                    throw new Error('The Chats permission is required to resolve the active chat for Draft Polish.');
+                const activeChat = await spindle.chats.getActive(userId);
+                if (!activeChat?.id)
+                    throw new Error('Open a Lumiverse chat before using Draft Polish.');
+                const messages = await spindle.chat.getMessages(activeChat.id);
+                const latestAssistant = [...messages].reverse().find((m) => m?.role === 'assistant' && String(m?.content || '').trim());
+                if (!latestAssistant?.id)
+                    throw new Error('The active chat does not have an assistant reply to anchor this draft rewrite.');
+                await handleDraftRewrite(String(activeChat.id), String(latestAssistant.id), draft, userId);
+            }
+            catch (err) {
+                const message = err?.message || String(err);
+                spindle.log.error(`Persona Paths manual draft rewrite failed: ${message}`);
+                try {
+                    spindle.toast.error(message, { title: 'Draft Polish' });
+                }
+                catch { }
+                spindle.sendToFrontend({ type: 'draft_rewrite_error', error: message }, userId);
+            }
             return;
         }
         if (payload.type === 'manual_generate_latest') {
