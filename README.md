@@ -1,12 +1,12 @@
 # Persona Paths
 
-## v0.1.25 — Current-moment anchoring + Draft Polish
+## v0.1.26 — Lumiverse virtualization/performance pass
 
-Fixes a continuity bug that could make Paths answer from an earlier beat inside a long assistant reply. Older builds truncated each scene message from the end, so the model could literally miss the newest physical state. v0.1.25 preserves the final portion of long replies, repeats the end of the newest assistant turn as a highest-priority **CURRENT MOMENT** block, and explicitly requires every Path to start from the final location/posture/state unless the Path itself changes it.
+Optimizes Persona Paths for Lumiverse's current virtualized message list. Older builds restored up to 40 historical Path cards and reacted to every `CHARACTER_MESSAGE_RENDERED` remount by re-rendering a sandbox widget or requesting cached choices from the backend. On long chats, ordinary scrolling could therefore create repeated widget teardown/recreation, iframe resize work, backend RPCs, and virtual-row remeasurement.
 
-Adds **Draft Polish**: use the ✦ button on a Persona Paths card (or `Polish Draft with Persona Paths` from Lumiverse's Extras menu) to rewrite whatever is currently in the composer. It is designed for a selected Path plus manual edits or multiple combined Paths. The rewrite preserves the human's decisions and added ideas, smooths seams/repetition, keeps persona voice/POV/tense, respects the final scene state, and does not invent NPC/world outcomes.
+v0.1.26 keeps **at most one Path widget active: the latest actionable assistant reply**. Historical choices remain saved privately but are no longer mounted while scrolling. Message remounts do no backend work, identical widget payloads are render-deduplicated, chat restore loads only the latest cached Path, and starting a new story generation retires the previous widget immediately. All v0.1.25 features — Current Moment anchoring, Memory Cortex, Draft Polish, Prism, guided regeneration, combining Paths, etc. — remain intact.
 
-Version 0.1.25
+Version 0.1.26
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 

@@ -1,6 +1,6 @@
 type Ctx = any
 
-const EXT_VERSION = '0.1.25'
+const EXT_VERSION = '0.1.26'
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`
 
 type Choice = { intent: string; title: string; text: string; advances_scene?: boolean }
@@ -191,6 +191,8 @@ function renderChoiceText(body: HTMLElement, text: string, prismColor?: string) 
 export function setup(ctx: Ctx) {
   const cards = new Map<string, () => void>()
   const dataByMessage = new Map<string, CachedPath>()
+  const widgetSignatures = new Map<string, string>()
+  let activePathMessageId: string | null = null
   let currentState: any = null
   let saveTimer: any = null
   const renderedMessages = new Set<string>()
@@ -344,12 +346,38 @@ export function setup(ctx: Ctx) {
 
   retireLegacyCards()
 
-  function renderMessageWidget(messageId: string, chatId: string, model: any) {
-    const previous = cards.get(messageId)
-    if (previous) {
-      try { previous() } catch {}
-      cards.delete(messageId)
+  function latestHostMessageId(): string {
+    try {
+      const direct = ctx.messages?.getLatestMessageId?.()
+      if (direct) return String(direct)
+    } catch {}
+    try {
+      const ids = ctx.messages?.listMessageIds?.()
+      return ids?.length ? String(ids[ids.length - 1]) : ''
+    } catch {}
+    return ''
+  }
+
+  function clearNonActiveWidgets(keepMessageId?: string) {
+    for (const [id, cleanup] of Array.from(cards.entries())) {
+      if (keepMessageId && id === keepMessageId) continue
+      try { cleanup() } catch {}
+      cards.delete(id)
+      widgetSignatures.delete(id)
+      dataByMessage.delete(id)
     }
+    if (!keepMessageId || activePathMessageId !== keepMessageId) {
+      activePathMessageId = keepMessageId || null
+    }
+  }
+
+  function activateMessage(messageId: string) {
+    if (activePathMessageId !== messageId) clearNonActiveWidgets(messageId)
+    activePathMessageId = messageId
+  }
+
+  function renderMessageWidget(messageId: string, chatId: string, model: any) {
+    activateMessage(messageId)
 
     const prismColor = /^#[0-9A-F]{6}$/i.test(String(model?.prismColor || ''))
       ? String(model.prismColor).toUpperCase()
@@ -362,6 +390,15 @@ export function setup(ctx: Ctx) {
       choices: Array.isArray(model?.choices) ? model.choices : [],
       error: String(model?.error || ''),
       prismColor,
+    }
+    const signature = JSON.stringify(payload)
+    if (cards.has(messageId) && widgetSignatures.get(messageId) === signature) return true
+
+    const previous = cards.get(messageId)
+    if (previous) {
+      try { previous() } catch {}
+      cards.delete(messageId)
+      widgetSignatures.delete(messageId)
     }
 
     const html = `<!doctype html>
@@ -602,6 +639,7 @@ export function setup(ctx: Ctx) {
         },
       )
       cards.set(messageId, cleanup)
+      widgetSignatures.set(messageId, signature)
       return true
     } catch (err) {
       console.error('[Persona Paths] Message widget render failed', err)
@@ -615,7 +653,9 @@ export function setup(ctx: Ctx) {
       try { cleanup() } catch {}
     }
     cards.delete(messageId)
+    widgetSignatures.delete(messageId)
     dataByMessage.delete(messageId)
+    if (activePathMessageId === messageId) activePathMessageId = null
   }
 
   function renderLoading(messageId: string, chatId: string) {
@@ -1039,7 +1079,8 @@ export function setup(ctx: Ctx) {
     maxTokens.value = String(cfg.maxTokens ?? 1400)
     prismStatus.textContent = String(state?.prismInfo?.status || (cfg.prismIntegration === 'off' ? 'Prism integration is off.' : 'Prism color unavailable.'))
     if (state?.prismInfo?.color) {
-      for (const cached of dataByMessage.values()) renderChoices(cached)
+      const cached = activePathMessageId ? dataByMessage.get(activePathMessageId) : null
+      if (cached) renderChoices(cached)
     }
 
     const conns = Array.isArray(state?.connections) ? state.connections : []
@@ -1167,12 +1208,16 @@ export function setup(ctx: Ctx) {
       const id = String(payload?.messageId || '')
       const chatId = String(payload?.chatId || '')
       if (!id) return
-      renderedMessages.add(id)
-      if (dataByMessage.has(id)) renderChoices(dataByMessage.get(id) as CachedPath)
-      else ctx.sendToBackend({ type: 'load_choices', messageId: id })
-
+      // Lumiverse virtualizes/remounts messages while scrolling. Do not load,
+      // cache, or reconstruct historical Persona Paths widgets on that hot path.
+      // Track only the current/latest reply (needed for our post-render delay).
+      const isAwaited = awaitingRender.has(id)
+      if (isAwaited || id === latestHostMessageId()) {
+        renderedMessages.clear()
+        renderedMessages.add(id)
+      }
       const pendingChatId = awaitingRender.get(id) || chatId
-      if (pendingChatId && awaitingRender.has(id)) scheduleSettledGeneration(pendingChatId, id)
+      if (pendingChatId && isAwaited) scheduleSettledGeneration(pendingChatId, id)
     })
   } catch (err) { console.warn('[Persona Paths] CHARACTER_MESSAGE_RENDERED subscription failed', err) }
 
@@ -1183,6 +1228,10 @@ export function setup(ctx: Ctx) {
       const chatId = String(payload?.chatId || '')
       const targetMessageId = String(payload?.targetMessageId || '')
       if (chatId) cancelChatTimers(chatId)
+      // Once the user starts a new story generation, the previous next-move
+      // widget is stale. Removing it here keeps at most one sandbox frame alive.
+      clearNonActiveWidgets()
+      dataByMessage.clear()
       if (targetMessageId) renderedMessages.delete(targetMessageId)
     })
   } catch (err) { console.warn('[Persona Paths] GENERATION_STARTED subscription failed', err) }
@@ -1216,6 +1265,7 @@ export function setup(ctx: Ctx) {
         const chatId = String(payload.chatId)
         const messageId = String(payload.message.id)
         cancelChoiceTimer(messageId)
+        removeCard(messageId)
         renderedMessages.delete(messageId)
         waitForRenderThenGenerate(chatId, messageId)
       }
@@ -1228,24 +1278,24 @@ export function setup(ctx: Ctx) {
       for (const messageId of Array.from(renderFallbackTimers.keys())) cancelChoiceTimer(messageId)
       awaitingRender.clear()
       renderedMessages.clear()
-      for (const cleanup of cards.values()) { try { cleanup() } catch {} }
+      clearNonActiveWidgets()
       cards.clear()
+      widgetSignatures.clear()
       dataByMessage.clear()
+      activePathMessageId = null
       setTimeout(() => {
-        try {
-          const ids = ctx.messages.listMessageIds()
-          if (ids?.length) ctx.sendToBackend({ type: 'load_choices', messageIds: ids.slice(-40) })
-        } catch {}
+        const latestId = latestHostMessageId()
+        if (latestId) ctx.sendToBackend({ type: 'load_choices', messageId: latestId })
         ctx.sendToBackend({ type: 'get_state' })
       }, 80)
     })
   } catch (err) { console.warn('[Persona Paths] CHAT_SWITCHED subscription failed', err) }
 
   ctx.sendToBackend({ type: 'get_state' })
-  try {
-    const existingIds = ctx.messages.listMessageIds()
-    if (existingIds?.length) ctx.sendToBackend({ type: 'load_choices', messageIds: existingIds.slice(-40) })
-  } catch {}
+  // Restore only the latest message's cached Paths. Historical cards remain in
+  // backend storage but are intentionally not mounted during virtualized scroll.
+  const initialLatestId = latestHostMessageId()
+  if (initialLatestId) ctx.sendToBackend({ type: 'load_choices', messageId: initialLatestId })
 
   return () => {
     if (saveTimer) clearTimeout(saveTimer)
@@ -1268,6 +1318,9 @@ export function setup(ctx: Ctx) {
     try { floatLauncher?.destroy?.() } catch {}
     for (const cleanup of cards.values()) { try { cleanup() } catch {} }
     cards.clear()
+    widgetSignatures.clear()
+    dataByMessage.clear()
+    activePathMessageId = null
     removeStyle()
     tab.destroy()
     ctx.dom.cleanup()
