@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.26';
+const EXT_VERSION = '0.1.27';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -391,6 +391,7 @@ export function setup(ctx) {
             messageId,
             chatId,
             styleText: String(model?.styleText || ''),
+            sceneState: model?.sceneState || null,
             choices: Array.isArray(model?.choices) ? model.choices : [],
             error: String(model?.error || ''),
             prismColor,
@@ -425,6 +426,16 @@ export function setup(ctx) {
   }
   .head { display:flex; align-items:center; gap:8px; min-width:0; margin:0 2px 8px; min-height:26px; }
   .brand { font-size:12px; font-weight:700; letter-spacing:.02em; color:var(--lumiverse-text-muted); }
+  .state {
+    display:flex; justify-content:space-between; gap:12px; align-items:center; min-width:0;
+    margin:0 2px 10px; padding:7px 9px; border:1px solid var(--lumiverse-border);
+    border-radius:10px; background:color-mix(in srgb, var(--lumiverse-fill) 72%, transparent);
+  }
+  .state[hidden] { display:none !important; }
+  .state-item { display:flex; align-items:center; gap:6px; min-width:0; color:var(--lumiverse-text-muted); }
+  .state-item:last-child { justify-content:flex-end; text-align:right; }
+  .state-glyph { flex:0 0 auto; font-size:10px; opacity:.7; }
+  .state-value { min-width:0; font-size:9.8px; font-weight:750; letter-spacing:.055em; text-transform:uppercase; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .style { font-size:10px; color:var(--lumiverse-text-muted); opacity:.78; }
   .toast { font-size:10px; color:var(--lumiverse-text-muted); opacity:0; transition:opacity .15s; }
   .toast.show { opacity:1; }
@@ -448,15 +459,22 @@ export function setup(ctx) {
     background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text-muted);
   }
   .title { min-width:0; font-size:12px; font-weight:700; overflow-wrap:anywhere; }
+  .heat { position:relative; margin-left:auto; display:inline-flex; gap:3px; flex:0 0 auto; align-items:center; cursor:help; }
+  .heat-dot { width:6px; height:6px; border-radius:999px; border:1px solid currentColor; opacity:.38; }
+  .heat-dot.on { background:currentColor; opacity:.82; }
   .advance {
-    margin-left:auto; flex:0 0 auto; font-size:9px; font-weight:700; letter-spacing:.04em;
+    margin-left:2px; flex:0 0 auto; font-size:9px; font-weight:700; letter-spacing:.04em;
     text-transform:uppercase; opacity:.72; padding:2px 6px; border:1px solid var(--lumiverse-border);
     border-radius:999px; white-space:nowrap;
   }
   .text {
     display:block; min-width:0; max-width:100%; font-size:12.5px; line-height:1.45;
     color:var(--lumiverse-text-muted); white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;
+    filter:blur(4px); opacity:.42; user-select:none; pointer-events:none;
+    transition:filter .13s ease, opacity .13s ease;
   }
+  .choice:hover .text, .choice:focus-visible .text, .choice.revealed .text { filter:none; opacity:1; user-select:text; }
+  .footer-hint { margin:9px 2px 1px; text-align:center; font-size:9.5px; color:var(--lumiverse-text-muted); opacity:.68; letter-spacing:.02em; }
   .loading { display:flex; align-items:center; gap:8px; color:var(--lumiverse-text-muted); font-size:12px; padding:4px 2px; }
   .dot { width:6px; height:6px; border-radius:999px; background:currentColor; animation:pulse 1.1s infinite alternate; }
   @keyframes pulse { from{opacity:.25; transform:scale(.8)} to{opacity:1; transform:scale(1.1)} }
@@ -491,7 +509,12 @@ export function setup(ctx) {
       <button type="button" class="icon" id="guideBtn" title="Regenerate with guidance" aria-label="Regenerate with guidance">✎</button>
       <button type="button" class="icon" id="regenBtn" title="Regenerate choices" aria-label="Regenerate choices">↻</button>
     </div>
+    <div class="state" id="sceneState" hidden>
+      <div class="state-item"><span class="state-glyph">⌖</span><span class="state-value" id="stateLocation"></span></div>
+      <div class="state-item"><span class="state-glyph">◷</span><span class="state-value" id="stateMoment"></span></div>
+    </div>
     <div class="choices" id="choices"></div>
+    <div class="footer-hint" id="footerHint" hidden></div>
     <div class="guide" id="guide" hidden>
       <div class="guide-title">Regenerate with guidance</div>
       <textarea id="guidance" placeholder="What direction were you thinking? e.g. Stop arguing and give me options where Rook physically leaves camp."></textarea>
@@ -513,8 +536,20 @@ export function setup(ctx) {
   const polishBtn = document.getElementById('polishBtn');
   const guideBtn = document.getElementById('guideBtn');
   const regenBtn = document.getElementById('regenBtn');
+  const sceneState = document.getElementById('sceneState');
+  const stateLocation = document.getElementById('stateLocation');
+  const stateMoment = document.getElementById('stateMoment');
+  const footerHint = document.getElementById('footerHint');
   const color = /^#[0-9A-F]{6}$/i.test(model.prismColor || '') ? model.prismColor : '';
+  const canHover = !!window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
   style.textContent = model.styleText || '';
+  const loc = String(model.sceneState?.location || '').trim();
+  const moment = String(model.sceneState?.moment || '').trim();
+  if (loc || moment) {
+    stateLocation.textContent = loc || 'Current scene';
+    stateMoment.textContent = moment || 'Current beat';
+    sceneState.hidden = false;
+  }
 
   function resize() { try { window.spindleSandbox.requestResize(); } catch {} }
   function post(payload) { window.spindleSandbox.postMessage(payload); }
@@ -575,14 +610,34 @@ export function setup(ctx) {
       const num = document.createElement('span'); num.className = 'num'; num.textContent = String(index + 1);
       const title = document.createElement('span'); title.className = 'title'; title.textContent = choice.title || choice.intent || ('Option ' + (index + 1));
       top.append(num, title);
+      const intensity = Math.max(1, Math.min(3, Math.round(Number(choice.intensity) || 0)));
+      if (intensity) {
+        const heat = document.createElement('span'); heat.className = 'heat';
+        const heatLabel = intensity === 1 ? 'Low impact' : intensity === 2 ? 'Decisive' : 'Volatile';
+        heat.title = 'Intensity ' + intensity + '/3 — ' + heatLabel;
+        heat.setAttribute('aria-label', heat.title);
+        for (let dotIndex = 1; dotIndex <= 3; dotIndex++) {
+          const dot = document.createElement('span'); dot.className = 'heat-dot' + (dotIndex <= intensity ? ' on' : ''); heat.appendChild(dot);
+        }
+        top.appendChild(heat);
+      }
       if (choice.advances_scene) {
         const badge = document.createElement('span'); badge.className = 'advance'; badge.textContent = 'Advance scene'; top.appendChild(badge);
       }
       const body = document.createElement('span'); body.className = 'text'; renderRich(body, choice.text || '');
       button.append(top, body);
-      button.addEventListener('click', () => { post({ type:'choice', index }); showToast('Added · click another to combine'); });
+      button.addEventListener('click', () => {
+        if (!canHover && !button.classList.contains('revealed')) {
+          button.classList.add('revealed');
+          showToast('Revealed · tap again to add');
+          return;
+        }
+        post({ type:'choice', index }); showToast('Added · click another to combine');
+      });
       host.appendChild(button);
     });
+    footerHint.textContent = canHover ? 'Scan the labels · hover to reveal a Path · click to add' : 'Scan the labels · tap to reveal · tap again to add';
+    footerHint.hidden = false;
   }
 
   polishBtn.addEventListener('click', () => { post({ type:'rewrite' }); showToast('Polishing draft…'); });
@@ -677,6 +732,7 @@ export function setup(ctx) {
         renderMessageWidget(data.messageId, data.chatId, {
             mode: 'choices',
             styleText: titleCaseStyle(data.style),
+            sceneState: data.sceneState,
             choices: data.choices,
             prismColor: currentState?.prismInfo?.color || data.prismColor,
         });

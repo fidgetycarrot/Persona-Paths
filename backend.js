@@ -348,6 +348,17 @@ function validateResult(result, expectedCount, detail) {
     const issues = [];
     if (!result || !Array.isArray(result.choices))
         issues.push('choices is missing');
+    const state = result?.scene_state;
+    const location = String(state?.location || '').trim();
+    const moment = String(state?.moment || '').trim();
+    if (!location)
+        issues.push('scene_state.location is missing');
+    if (!moment)
+        issues.push('scene_state.moment is missing');
+    if (location && location.split(/\s+/).filter(Boolean).length > 8)
+        issues.push('scene_state.location is too long');
+    if (moment && moment.split(/\s+/).filter(Boolean).length > 10)
+        issues.push('scene_state.moment is too long');
     const choices = Array.isArray(result?.choices) ? result.choices : [];
     if (choices.length !== expectedCount)
         issues.push(`expected exactly ${expectedCount} choices`);
@@ -368,6 +379,9 @@ function validateResult(result, expectedCount, detail) {
         }
         if (String(c.text || '').trim().length < minLength)
             issues.push(`choice ${i + 1} is too short`);
+        const intensity = Number(c.intensity);
+        if (!Number.isInteger(intensity) || intensity < 1 || intensity > 3)
+            issues.push(`choice ${i + 1} intensity must be 1, 2, or 3`);
         const intent = String(c.intent || '').trim().toLowerCase();
         if (intent && intents.has(intent))
             issues.push(`choice ${i + 1} repeats another intent`);
@@ -709,6 +723,7 @@ CHOICE QUALITY RULES
 - The choices must differ in TRAJECTORY, not merely wording, tone, or punchline.
 - Each choice title is a SCAN LABEL, not a miniature summary of the first action. Make it 2–4 words whenever possible and describe the option's emotional/strategic direction, intent, or likely immediate trajectory at a glance. Include emotional stance when it materially distinguishes the option (for example: "Angry pushback", "Protective regroup", "Playful deflection", "Quiet withdrawal", "Commit to leaving", "Investigate carefully").
 - Do NOT use generic action-only titles such as "Move to the couch", "Ask a question", "Raid the fridge", or "Talk to Sovi" when a more informative intent label is possible. The player should be able to skip obviously wrong emotional directions by reading titles alone.
+- For every choice, return an integer "intensity" from 1 to 3 describing the option's immediate commitment/volatility, NOT morality and NOT chance of success: 1 = quiet/low-impact/easy to reverse, 2 = decisive/meaningful commitment, 3 = volatile/high-impact/hard to walk back. Do not force an even spread; rate what the option actually does.
 - EXACTLY ONE choice must be the SCENE ADVANCER. Mark only that choice with "advances_scene": true; all other choices must use false.
 - The Scene Advancer must commit the persona to a meaningful next beat that materially changes the situation instead of merely continuing the current conversational/emotional loop. Examples include leaving or entering a place, beginning travel, starting or abandoning a task, initiating an investigation, making a decisive physical move, acting on a plan, changing the immediate objective, or otherwise creating a new state for the story model to respond to.
 - "Advance the scene" does NOT mean "be reckless", "escalate", or "invent a twist". It must remain plausible for this persona and moment, and it must still obey the authorship boundary below. A quiet departure, going to sleep, beginning preparations, or setting off down a trail can advance the scene when appropriate.
@@ -737,6 +752,12 @@ STYLE
 - ADULT CONTENT: ${adultContentInstruction(cfg.adultContent)}
 - The choice text must be ready to paste directly into the user's composer. Do not put labels or explanations inside the pasted text.
 
+CURRENT-STATE METADATA
+- Return a tiny scene_state object describing where the PLAYER PERSONA physically is at the END of the latest assistant reply and the immediate beat they are in.
+- scene_state.location should be a 2–6 word physical anchor such as "Living room couch", "Passenger seat", "Forest trail", or "Kitchen doorway". It must reflect the FINAL state, not an earlier location from the same reply.
+- scene_state.moment should be a 2–8 word immediate beat/status such as "Pinned in the chair", "Hannah awaiting an answer", "Microwave running", or "Argument just broke". Keep it observable/grounded and do not invent an outcome.
+- This metadata is for the human's UI sanity check. If you cannot reconcile it with CURRENT MOMENT, trust CURRENT MOMENT.
+
 PRIVATE RELATIONSHIP NOTES
 - Return concise, observable updates for relationships that matter in the current scene. Do not invent a named relationship if the transcript does not support one.
 - Use one entry per person/relationship. Preserve nuance: for example, a persona may be soft with Elena while remaining brash with everyone else.
@@ -746,11 +767,12 @@ OUTPUT
 Return JSON only, with this exact shape:
 {
   "style": { "pov": "first|second|third", "tense": "present|past" },
+  "scene_state": { "location": "Living room couch", "moment": "Hannah awaiting an answer" },
   "relationship_updates": [
     { "subject": "Elena", "notes": ["unusually patient", "protective", "still blunt and teasing"] }
   ],
   "choices": [
-    { "intent": "short unique trajectory", "title": "2–4 word emotional/strategic scan label", "text": "paste-ready user turn", "advances_scene": false }
+    { "intent": "short unique trajectory", "title": "2–4 word emotional/strategic scan label", "text": "paste-ready user turn", "intensity": 2, "advances_scene": false }
   ]
 }
 No markdown. No commentary.`;
@@ -928,6 +950,7 @@ async function generatePaths(args, userId) {
         parsed.choices = parsed.choices.map((choice) => ({
             ...choice,
             text: cleanGeneratedChoiceText(choice?.text),
+            intensity: Number(choice?.intensity),
             advances_scene: choice?.advances_scene === true,
         }));
     }
@@ -992,8 +1015,13 @@ Generate the answer again from scratch. Return one corrected JSON object only. P
         intent: String(choice.intent || '').trim(),
         title: String(choice.title || '').trim(),
         text: cleanGeneratedChoiceText(choice.text),
+        intensity: Math.max(1, Math.min(3, Math.round(Number(choice?.intensity) || 2))),
         advances_scene: choice?.advances_scene === true,
     }));
+    parsed.scene_state = {
+        location: String(parsed.scene_state?.location || '').trim(),
+        moment: String(parsed.scene_state?.moment || '').trim(),
+    };
     parsed.relationship_updates = Array.isArray(parsed.relationship_updates)
         ? parsed.relationship_updates.map((item) => ({
             subject: String(item?.subject || '').trim(),
@@ -1233,6 +1261,10 @@ async function handleAssistantMessage(chatId, messageId, force = false, userId, 
             messageId,
             contentHash,
             style: result.style,
+            sceneState: {
+                location: String(result.scene_state?.location || '').trim(),
+                moment: String(result.scene_state?.moment || '').trim(),
+            },
             choices: result.choices,
             prismColor: prismInfo.color || undefined,
             createdAt: Date.now(),

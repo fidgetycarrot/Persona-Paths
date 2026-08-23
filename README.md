@@ -1,12 +1,16 @@
 # Persona Paths
 
+## v0.1.27 — scan-first Path cards
+
+Adds compact current-state metadata and progressive disclosure without changing the v0.1.26 virtualization strategy. Each fresh generation returns the persona's final **location** and **current beat** as a sanity-check header, plus a 1–3 **intensity** rating for every Path. Detailed Path text is blurred by default so intent labels can be scanned quickly; desktop hover reveals the text and touch devices use tap-to-reveal / tap-again-to-add. Intensity dots expose a tooltip (`Intensity 1/3 — Low impact`, `2/3 — Decisive`, `3/3 — Volatile`). The card remains a single Lumiverse-managed widget attached only to the latest actionable assistant reply.
+
 ## v0.1.26 — Lumiverse virtualization/performance pass
 
 Optimizes Persona Paths for Lumiverse's current virtualized message list. Older builds restored up to 40 historical Path cards and reacted to every `CHARACTER_MESSAGE_RENDERED` remount by re-rendering a sandbox widget or requesting cached choices from the backend. On long chats, ordinary scrolling could therefore create repeated widget teardown/recreation, iframe resize work, backend RPCs, and virtual-row remeasurement.
 
 v0.1.26 keeps **at most one Path widget active: the latest actionable assistant reply**. Historical choices remain saved privately but are no longer mounted while scrolling. Message remounts do no backend work, identical widget payloads are render-deduplicated, chat restore loads only the latest cached Path, and starting a new story generation retires the previous widget immediately. All v0.1.25 features — Current Moment anchoring, Memory Cortex, Draft Polish, Prism, guided regeneration, combining Paths, etc. — remain intact.
 
-Version 0.1.26
+Version 0.1.27
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
