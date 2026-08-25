@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.27';
+const EXT_VERSION = '0.1.28';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -269,6 +269,24 @@ export function setup(ctx) {
     .pp-guidance-actions { display:flex; justify-content:flex-end; gap:7px; margin-top:9px; }
     .pp-guidance-hint { margin-top:7px; font-size:9.8px; line-height:1.35; color:var(--lumiverse-text-muted); opacity:.78; }
 
+    .pp-guidance-modal { display:flex; flex-direction:column; gap:12px; min-width:0; }
+    .pp-guidance-modal-copy { margin:0; font-size:12px; line-height:1.45; color:var(--lumiverse-text-muted); }
+    .pp-guidance-modal-input {
+      width:100%; min-height:150px; max-height:44vh; resize:vertical; box-sizing:border-box;
+      border:1px solid var(--lumiverse-border); border-radius:10px; background:var(--lumiverse-fill);
+      color:var(--lumiverse-text); padding:11px 12px; font:inherit; font-size:16px; line-height:1.45;
+      overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
+    }
+    .pp-guidance-modal-input:focus { outline:2px solid color-mix(in srgb, var(--lumiverse-accent, currentColor) 45%, transparent); outline-offset:1px; }
+    .pp-guidance-modal-save { display:flex; align-items:flex-start; gap:8px; font-size:12px; line-height:1.35; color:var(--lumiverse-text-muted); cursor:pointer; }
+    .pp-guidance-modal-save input { margin-top:2px; accent-color:var(--lumiverse-accent); }
+    .pp-guidance-modal-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+    .pp-guidance-modal-error { min-height:1.2em; font-size:11px; color:var(--lumiverse-danger, #d97777); }
+    @media (max-width:620px), (pointer:coarse) {
+      .pp-guidance-modal-input { min-height:180px; max-height:38vh; resize:none; font-size:16px; }
+      .pp-guidance-modal-actions .pp-btn { min-height:42px; padding:10px 14px; }
+    }
+
     .pp-settings { padding:14px; display:flex; flex-direction:column; gap:14px; color:var(--lumiverse-text); }
     .pp-settings h3 { margin:0; font-size:16px; }
     .pp-settings p { margin:0; font-size:12px; line-height:1.45; color:var(--lumiverse-text-muted); }
@@ -359,6 +377,93 @@ export function setup(ctx) {
         }
         catch { }
         return '';
+    }
+    let guidanceModal = null;
+    function openGuidanceModal(chatId, messageId) {
+        try {
+            if (guidanceModal) {
+                try {
+                    guidanceModal.dismiss();
+                }
+                catch { }
+                guidanceModal = null;
+            }
+            const modal = ctx.ui.showModal({
+                title: 'Regenerate with guidance',
+                width: 560,
+                maxHeight: Math.min(680, Math.max(360, window.innerHeight - 24)),
+            });
+            guidanceModal = modal;
+            const wrap = ctx.dom.createElement('div', { class: 'pp-guidance-modal' });
+            const copy = ctx.dom.createElement('p', { class: 'pp-guidance-modal-copy' });
+            copy.textContent = 'Tell Persona Paths what direction you had in mind. This applies only to this regeneration unless you save it as persona guidance.';
+            const input = ctx.dom.createElement('textarea', {
+                class: 'pp-guidance-modal-input',
+                placeholder: 'Example: Stop arguing and give me options where Rook physically leaves camp.',
+            });
+            input.autocapitalize = 'sentences';
+            input.autocomplete = 'off';
+            input.spellcheck = true;
+            const save = ctx.dom.createElement('input', { type: 'checkbox' });
+            const saveLabel = ctx.dom.createElement('label', { class: 'pp-guidance-modal-save' });
+            saveLabel.append(save, document.createTextNode('Save this as active persona guidance'));
+            const error = ctx.dom.createElement('div', { class: 'pp-guidance-modal-error', role: 'status' });
+            const actions = ctx.dom.createElement('div', { class: 'pp-guidance-modal-actions' });
+            const cancel = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' });
+            cancel.textContent = 'Cancel';
+            const generate = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn pp-primary' });
+            generate.textContent = 'Generate new paths';
+            actions.append(cancel, generate);
+            wrap.append(copy, input, saveLabel, error, actions);
+            modal.root.appendChild(wrap);
+            let submitted = false;
+            const cleanupDismiss = modal.onDismiss(() => {
+                guidanceModal = null;
+                if (!submitted) {
+                    try {
+                        input.blur();
+                    }
+                    catch { }
+                }
+                try {
+                    cleanupDismiss();
+                }
+                catch { }
+            });
+            cancel.addEventListener('click', () => modal.dismiss());
+            generate.addEventListener('click', () => {
+                const guidance = String(input.value || '').trim();
+                if (!guidance) {
+                    error.textContent = 'Add a little guidance first.';
+                    input.focus();
+                    return;
+                }
+                submitted = true;
+                generate.disabled = true;
+                cancel.disabled = true;
+                try {
+                    input.blur();
+                }
+                catch { }
+                modal.dismiss();
+                guidanceModal = null;
+                // Let iOS finish dismissing its keyboard/modal viewport before the
+                // message widget changes height/state underneath it.
+                setTimeout(() => {
+                    renderLoading(messageId, chatId);
+                    ctx.sendToBackend({
+                        type: 'regenerate_with_guidance',
+                        chatId,
+                        messageId,
+                        guidance,
+                        saveAsPersonaGuidance: save.checked,
+                    });
+                }, 120);
+            });
+        }
+        catch (err) {
+            console.error('[Persona Paths] Could not open guidance modal', err);
+        }
     }
     function clearNonActiveWidgets(keepMessageId) {
         for (const [id, cleanup] of Array.from(cards.entries())) {
@@ -643,6 +748,10 @@ export function setup(ctx) {
   polishBtn.addEventListener('click', () => { post({ type:'rewrite' }); showToast('Polishing draft…'); });
   regenBtn.addEventListener('click', () => post({ type:'regenerate' }));
   guideBtn.addEventListener('click', () => {
+    // Typing inside a virtualized sandbox widget causes iOS Safari to fight
+    // Lumiverse row resizing + keyboard viewport changes. Touch-first devices
+    // hand steering off to a host-managed modal instead.
+    if (!canHover) { post({ type:'open_guidance_modal' }); return; }
     guide.hidden = !guide.hidden; resize();
     if (!guide.hidden) setTimeout(() => document.getElementById('guidance').focus(), 0);
   });
@@ -682,6 +791,10 @@ export function setup(ctx) {
                 if (type === 'regenerate' || type === 'retry') {
                     renderLoading(messageId, chatId);
                     ctx.sendToBackend({ type: 'regenerate', chatId, messageId });
+                    return;
+                }
+                if (type === 'open_guidance_modal') {
+                    openGuidanceModal(chatId, messageId);
                     return;
                 }
                 if (type === 'guidance') {
@@ -1331,6 +1444,13 @@ export function setup(ctx) {
     }
     try {
         unsubChatSwitch = ctx.events.on('CHAT_SWITCHED', () => {
+            if (guidanceModal) {
+                try {
+                    guidanceModal.dismiss();
+                }
+                catch { }
+                guidanceModal = null;
+            }
             for (const messageId of Array.from(choiceTimers.keys()))
                 cancelChoiceTimer(messageId);
             for (const messageId of Array.from(renderFallbackTimers.keys()))
@@ -1362,6 +1482,13 @@ export function setup(ctx) {
     return () => {
         if (saveTimer)
             clearTimeout(saveTimer);
+        if (guidanceModal) {
+            try {
+                guidanceModal.dismiss();
+            }
+            catch { }
+            guidanceModal = null;
+        }
         unsubBackend();
         for (const messageId of Array.from(choiceTimers.keys()))
             cancelChoiceTimer(messageId);
