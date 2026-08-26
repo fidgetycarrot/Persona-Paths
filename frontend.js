@@ -986,12 +986,12 @@ export function setup(ctx) {
     skipOoc.addEventListener('change', () => scheduleSave({ skipOoc: skipOoc.checked }, 0));
     settings.appendChild(skipOocLabel);
     const skipOocHint = ctx.dom.createElement('div', { class: 'pp-hint' });
-    skipOocHint.textContent = 'Ignores [OOC], [OOC]:, [ooc}:, (OOC):, and OOC: turns. The assistant reply to an OOC user message is skipped too, even if it does not repeat the marker. OOC exchanges are also excluded from scene context and portrayal examples.';
+    skipOocHint.textContent = 'Automatic generation ignores [OOC], [OOC]:, [ooc}:, (OOC):, and OOC: turns. The assistant reply to an OOC user message is skipped too, even if it does not repeat the marker. Manual Generate Paths can explicitly override this guard. OOC exchanges still stay out of portrayal examples and relationship learning.';
     settings.appendChild(skipOocHint);
     const manualRun = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn pp-primary' });
     manualRun.textContent = 'Generate Paths for latest reply';
     const manualStatus = ctx.dom.createElement('div', { class: 'pp-manual-status' });
-    manualStatus.textContent = 'Manual runs ignore the automatic on/off toggle and regenerate the latest assistant reply.';
+    manualStatus.textContent = 'Manual runs ignore the automatic on/off toggle and can force Paths even on an OOC exchange.';
     let manualPending = false;
     function triggerManualGeneration() {
         if (manualPending)
@@ -1267,7 +1267,9 @@ export function setup(ctx) {
         else if (payload.type === 'manual_target') {
             manualRun.textContent = 'Generating latest reply…';
             manualStatus.classList.remove('error');
-            manualStatus.textContent = 'Manual Persona Paths generation is running.';
+            manualStatus.textContent = payload.oocOverride
+                ? 'Forcing Paths on OOC exchange…'
+                : 'Manual Persona Paths generation is running.';
         }
         else if (payload.type === 'choices_loading') {
             renderLoading(String(payload.messageId), String(payload.chatId));

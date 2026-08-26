@@ -1,8 +1,16 @@
 # Persona Paths
 
+## v0.1.29 — manual OOC override
+
+- **Generate Paths for latest reply** now explicitly overrides the OOC guard when you invoke it manually.
+- Automatic generation still skips `[OOC]`, `[OOC]:`, `[ooc}:`, `(OOC):`, and `OOC:` exchanges.
+- A forced OOC generation can use that specific exchange as the immediate target, but OOC content stays out of portrayal examples, Memory Cortex / long-term-memory query context, and private relationship-memory learning.
+- Regenerate and guided regenerate continue to work on a manually forced OOC Paths card.
+- Manually forced OOC cards survive refresh/restoration instead of being deleted by the automatic OOC guard.
+
 ## v0.1.28 — mobile-safe steering modal
 
-- On touch-first/mobile devices, **Regenerate with guidance** now opens in Lumiverse's host-managed modal instead of expanding a textarea inside the virtualized message widget.
+- On touch-first/mobile devices, **Regenerate with guidance** opens in Lumiverse's host-managed modal instead of expanding a textarea inside the virtualized message widget.
 - Keeps the existing inline steering panel on desktop/hover-capable devices.
 - Uses a 16px mobile textarea to avoid iOS Safari focus zoom, and delays widget rerender very briefly after submission so the keyboard can dismiss cleanly.
 - Preserves **Save this as active persona guidance** in the mobile modal.
@@ -17,7 +25,7 @@ Optimizes Persona Paths for Lumiverse's current virtualized message list. Older 
 
 v0.1.26 keeps **at most one Path widget active: the latest actionable assistant reply**. Historical choices remain saved privately but are no longer mounted while scrolling. Message remounts do no backend work, identical widget payloads are render-deduplicated, chat restore loads only the latest cached Path, and starting a new story generation retires the previous widget immediately. All v0.1.25 features — Current Moment anchoring, Memory Cortex, Draft Polish, Prism, guided regeneration, combining Paths, etc. — remain intact.
 
-Version 0.1.28
+Version 0.1.29
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -157,3 +165,4 @@ Manual generation requires Lumiverse's `chats` permission in addition to the exi
 - Optional **Save this as active persona guidance** appends the correction to that persona's private Persona Paths guidance.
 - Saved guidance is per persona and immediately updates the existing Active persona guidance field.
 - Useful for persistent corrections such as `Never call Sovi “Price”; use Sovi's established name.` while leaving situational steering unsaved.
+

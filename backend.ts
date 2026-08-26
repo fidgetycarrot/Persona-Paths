@@ -57,6 +57,7 @@ type CachedPath = {
   sceneState?: { location: string; moment: string }
   choices: Choice[]
   prismColor?: string
+  oocForced?: boolean
   createdAt: number
 }
 
@@ -1269,7 +1270,7 @@ async function handleDraftRewrite(chatId: string, messageId: string, draft: stri
   try { spindle.toast.success('Draft polished.') } catch {}
 }
 
-async function handleAssistantMessage(chatId: string, messageId: string, force = false, userId?: string, regenerationGuidance = '', saveAsPersonaGuidance = false) {
+async function handleAssistantMessage(chatId: string, messageId: string, force = false, userId?: string, regenerationGuidance = '', saveAsPersonaGuidance = false, allowOocOverride = false) {
   if (!config.enabled && !force) return
   const key = `${chatId}:${messageId}`
   if (inFlight.has(key)) return
@@ -1281,7 +1282,16 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
     if (!target || target.role !== 'assistant') return
 
     const oocMessageIds = config.skipOoc ? collectOocMessageIds(messages) : new Set<string>()
-    if (config.skipOoc && oocMessageIds.has(messageId)) {
+    const targetIsOoc = config.skipOoc && oocMessageIds.has(messageId)
+    if (targetIsOoc && !allowOocOverride) {
+      const existingForced = cache[messageId]
+      const currentHash = hashText(String(target.content || ''))
+      if (existingForced?.oocForced && existingForced.contentHash === currentHash) {
+        // Restoring a choice set the human explicitly forced is not the same as
+        // automatically generating on OOC. Keep that manual decision durable.
+        spindle.sendToFrontend({ type: 'choices_ready', data: existingForced }, userId)
+        return
+      }
       if (cache[messageId]) {
         delete cache[messageId]
         await saveCache()
@@ -1337,12 +1347,36 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
     const storyMessages = messages.filter((m: any) =>
       (m.role === 'user' || m.role === 'assistant') && (!config.skipOoc || !oocMessageIds.has(String(m.id || '')))
     )
-    const targetIndex = storyMessages.findIndex((m: any) => m.id === messageId)
-    const throughTarget = targetIndex >= 0 ? storyMessages.slice(0, targetIndex + 1) : storyMessages
-    const sceneMessages = throughTarget.slice(-config.contextMessages)
-    const recentUserTurns = throughTarget.filter((m: any) => m.role === 'user').slice(-config.recentUserExamples)
 
-    const firstSceneMessageId = String(sceneMessages[0]?.id || '')
+    // OOC protection is an automation guard, not a hard prohibition. A manual/explicit
+    // run may target an OOC assistant reply, but OOC turns still stay out of portrayal
+    // examples, Cortex/long-term-memory query context, and relationship learning.
+    let throughTarget: any[]
+    if (targetIsOoc && allowOocOverride) {
+      const originalTargetIndex = messages.findIndex((m: any) => String(m?.id || '') === messageId)
+      const priorNormal = originalTargetIndex >= 0
+        ? messages.slice(0, originalTargetIndex).filter((m: any) =>
+            (m.role === 'user' || m.role === 'assistant') && !oocMessageIds.has(String(m.id || ''))
+          )
+        : storyMessages
+      const preceding = originalTargetIndex > 0 ? messages[originalTargetIndex - 1] : null
+      const forcedExchange = preceding && preceding.role === 'user' && oocMessageIds.has(String(preceding.id || ''))
+        ? [preceding, target]
+        : [target]
+      throughTarget = [...priorNormal, ...forcedExchange]
+      spindle.log.info(`Persona Paths manually overriding OOC guard for ${messageId}.`)
+    } else {
+      const targetIndex = storyMessages.findIndex((m: any) => m.id === messageId)
+      throughTarget = targetIndex >= 0 ? storyMessages.slice(0, targetIndex + 1) : storyMessages
+    }
+
+    const sceneMessages = throughTarget.slice(-config.contextMessages)
+    const recentUserTurns = throughTarget
+      .filter((m: any) => m.role === 'user' && (!config.skipOoc || !oocMessageIds.has(String(m.id || ''))))
+      .slice(-config.recentUserExamples)
+
+    const memorySceneMessages = sceneMessages.filter((m: any) => !oocMessageIds.has(String(m.id || '')))
+    const firstSceneMessageId = String((memorySceneMessages[0] || sceneMessages[0])?.id || '')
     const recentSceneStartIndex = firstSceneMessageId
       ? messages.findIndex((m: any) => String(m?.id || '') === firstSceneMessageId)
       : -1
@@ -1352,7 +1386,7 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
       messages,
       oocMessageIds,
       recentSceneStartIndex,
-      sceneMessages,
+      memorySceneMessages.length ? memorySceneMessages : sceneMessages,
       persona,
     )
 
@@ -1380,12 +1414,13 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
       },
       choices: result.choices,
       prismColor: prismInfo.color || undefined,
+      oocForced: targetIsOoc && allowOocOverride ? true : undefined,
       createdAt: Date.now(),
     }
     cache[messageId] = entry
     await saveCache()
 
-    if (config.relationshipMemory && result.relationship_updates?.length) {
+    if (config.relationshipMemory && result.relationship_updates?.length && !(targetIsOoc && allowOocOverride)) {
       const previousSubjects = relationshipMemory[memoryKey]?.subjects || {}
       const nextSubjects: Record<string, string[]> = { ...previousSubjects }
       for (const update of result.relationship_updates) {
@@ -1531,7 +1566,7 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
           }
         }
         for (const id of messageIds) {
-          if (config.skipOoc && blocked.has(id)) {
+          if (config.skipOoc && blocked.has(id) && !cache[id]?.oocForced) {
             delete cache[id]
             cacheChanged = true
             spindle.sendToFrontend({ type: 'choices_skipped', chatId, messageId: id, reason: 'ooc' }, userId)
@@ -1555,7 +1590,7 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
     if (payload.type === 'regenerate') {
       const chatId = String(payload.chatId || '')
       const messageId = String(payload.messageId || '')
-      if (chatId && messageId) await handleAssistantMessage(chatId, messageId, true, userId)
+      if (chatId && messageId) await handleAssistantMessage(chatId, messageId, true, userId, '', false, true)
       return
     }
 
@@ -1566,7 +1601,7 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
       const saveAsPersonaGuidance = !!payload.saveAsPersonaGuidance
       if (!chatId || !messageId) throw new Error('A chat and assistant reply are required for guided regeneration.')
       if (!guidance) throw new Error('Enter some guidance before regenerating Persona Paths.')
-      await handleAssistantMessage(chatId, messageId, true, userId, guidance, saveAsPersonaGuidance)
+      await handleAssistantMessage(chatId, messageId, true, userId, guidance, saveAsPersonaGuidance, true)
       return
     }
 
@@ -1620,15 +1655,20 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
       )
       if (!latestAssistant?.id) throw new Error('The active chat does not have an assistant reply to generate paths for yet.')
 
+      const manualOocIds = config.skipOoc ? collectOocMessageIds(messages) : new Set<string>()
+      const isOocOverride = config.skipOoc && manualOocIds.has(String(latestAssistant.id))
+
       spindle.sendToFrontend({
         type: 'manual_target',
         chatId: activeChat.id,
         messageId: latestAssistant.id,
+        oocOverride: isOocOverride,
       }, userId)
 
-      // Force=true deliberately replaces/retries any cached result for this reply,
-      // and bypasses the automatic-generation enabled toggle.
-      await handleAssistantMessage(activeChat.id, String(latestAssistant.id), true, userId)
+      // Force=true deliberately replaces/retries any cached result for this reply and
+      // bypasses the automatic-generation enabled toggle. allowOocOverride=true makes
+      // the manual action authoritative even when the latest exchange is tagged OOC.
+      await handleAssistantMessage(activeChat.id, String(latestAssistant.id), true, userId, '', false, true)
       return
     }
 
