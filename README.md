@@ -1,5 +1,12 @@
 # Persona Paths
 
+## v0.1.30 — visible Draft Polish progress
+
+- Clicking the diamond Draft Polish button immediately changes it into a spinner with a persistent **Polishing…** label.
+- Duplicate polish clicks are ignored while the rewrite request is running, including after a Lumiverse message-widget remount.
+- A completed rewrite shows **Draft polished ✓**; a failed rewrite shows **Polish failed — try again**, then restores the normal diamond button.
+- Preserves the v0.1.29 OOC manual override, mobile steering modal, Memory Cortex integration, and latest-widget performance architecture.
+
 ## v0.1.29 — manual OOC override
 
 - **Generate Paths for latest reply** now explicitly overrides the OOC guard when you invoke it manually.
@@ -25,7 +32,7 @@ Optimizes Persona Paths for Lumiverse's current virtualized message list. Older 
 
 v0.1.26 keeps **at most one Path widget active: the latest actionable assistant reply**. Historical choices remain saved privately but are no longer mounted while scrolling. Message remounts do no backend work, identical widget payloads are render-deduplicated, chat restore loads only the latest cached Path, and starting a new story generation retires the previous widget immediately. All v0.1.25 features — Current Moment anchoring, Memory Cortex, Draft Polish, Prism, guided regeneration, combining Paths, etc. — remain intact.
 
-Version 0.1.29
+Version 0.1.30
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -165,4 +172,3 @@ Manual generation requires Lumiverse's `chats` permission in addition to the exi
 - Optional **Save this as active persona guidance** appends the correction to that persona's private Persona Paths guidance.
 - Saved guidance is per persona and immediately updates the existing Active persona guidance field.
 - Useful for persistent corrections such as `Never call Sovi “Price”; use Sovi's established name.` while leaving situational steering unsaved.
-

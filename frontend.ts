@@ -1,6 +1,6 @@
 type Ctx = any
 
-const EXT_VERSION = '0.1.28'
+const EXT_VERSION = '0.1.30'
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`
 
 type Choice = { intent: string; title: string; text: string; intensity?: 1 | 2 | 3; advances_scene?: boolean }
@@ -193,6 +193,8 @@ export function setup(ctx: Ctx) {
   const cards = new Map<string, () => void>()
   const dataByMessage = new Map<string, CachedPath>()
   const widgetSignatures = new Map<string, string>()
+  const draftPolishState = new Map<string, { status: 'working' | 'success' | 'error'; message: string }>()
+  let draftPolishPending = false
   let activePathMessageId: string | null = null
   let currentState: any = null
   let saveTimer: any = null
@@ -493,6 +495,7 @@ export function setup(ctx: Ctx) {
       sceneState: model?.sceneState || null,
       choices: Array.isArray(model?.choices) ? model.choices : [],
       error: String(model?.error || ''),
+      polishState: model?.polishState || null,
       prismColor,
     }
     const signature = JSON.stringify(payload)
@@ -542,6 +545,10 @@ export function setup(ctx: Ctx) {
     border-radius:8px; width:28px; height:28px; padding:0; font-size:17px; line-height:1;
   }
   .icon:hover { background:var(--lumiverse-fill); color:var(--lumiverse-text); }
+  .icon:disabled { cursor:default; opacity:.72; }
+  .polish-working { width:auto; min-width:88px; padding:0 8px; display:inline-flex; align-items:center; justify-content:center; gap:6px; font-size:10px; }
+  .polish-spinner { width:11px; height:11px; border:1.5px solid currentColor; border-right-color:transparent; border-radius:999px; animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
   .choices { display:flex; flex-direction:column; gap:7px; min-width:0; }
   .choice {
     display:block; width:100%; min-width:0; max-width:100%; text-align:left; cursor:pointer;
@@ -687,6 +694,19 @@ export function setup(ctx: Ctx) {
     toast.textContent = text; toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 1400);
   }
+  function setPolishWorking() {
+    polishBtn.disabled = true;
+    polishBtn.classList.add('polish-working');
+    polishBtn.replaceChildren();
+    const spinner = document.createElement('span'); spinner.className = 'polish-spinner'; spinner.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span'); label.textContent = 'Polishing…';
+    polishBtn.append(spinner, label);
+    polishBtn.title = 'Draft polish in progress';
+    polishBtn.setAttribute('aria-label', 'Polishing draft');
+  }
+
+  if (model.polishState?.status === 'working') setPolishWorking();
+  else if (model.polishState?.message) setTimeout(() => showToast(model.polishState.message), 0);
 
   if (model.mode === 'loading') {
     polishBtn.hidden = true; guideBtn.hidden = true; regenBtn.hidden = true;
@@ -737,7 +757,11 @@ export function setup(ctx: Ctx) {
     footerHint.hidden = false;
   }
 
-  polishBtn.addEventListener('click', () => { post({ type:'rewrite' }); showToast('Polishing draft…'); });
+  polishBtn.addEventListener('click', () => {
+    if (polishBtn.disabled) return;
+    setPolishWorking();
+    post({ type:'rewrite' });
+  });
   regenBtn.addEventListener('click', () => post({ type:'regenerate' }));
   guideBtn.addEventListener('click', () => {
     // Typing inside a virtualized sandbox widget causes iOS Safari to fight
@@ -773,7 +797,12 @@ export function setup(ctx: Ctx) {
             return
           }
           if (type === 'rewrite') {
+            if (draftPolishPending) return
             const draft = getComposerText().trim()
+            draftPolishPending = true
+            draftPolishState.set(messageId, { status: 'working', message: 'Polishing…' })
+            const cached = dataByMessage.get(messageId)
+            if (cached) renderChoices(cached)
             if (!draft) {
               ctx.sendToBackend({ type: 'rewrite_draft', chatId, messageId, draft: '' })
               return
@@ -840,7 +869,24 @@ export function setup(ctx: Ctx) {
       sceneState: data.sceneState,
       choices: data.choices,
       prismColor: currentState?.prismInfo?.color || data.prismColor,
+      polishState: draftPolishState.get(data.messageId) || null,
     })
+  }
+
+  function finishDraftPolish(messageId: string, status: 'success' | 'error', message: string) {
+    draftPolishPending = false
+    const targetId = messageId || activePathMessageId || ''
+    if (!targetId) return
+    draftPolishState.set(targetId, { status, message })
+    const cached = dataByMessage.get(targetId)
+    if (cached) renderChoices(cached)
+    setTimeout(() => {
+      const current = draftPolishState.get(targetId)
+      if (current?.status !== status || current.message !== message) return
+      draftPolishState.delete(targetId)
+      const latest = dataByMessage.get(targetId)
+      if (latest) renderChoices(latest)
+    }, 1800)
   }
 
   function scheduleSave(patch: any, delay = 180) {
@@ -1337,9 +1383,12 @@ export function setup(ctx: Ctx) {
     else if (payload.type === 'draft_rewrite_ready') {
       const text = String(payload.text || '').trim()
       if (text) replaceComposer(text)
+      finishDraftPolish(String(payload.messageId || ''), 'success', 'Draft polished ✓')
     }
     else if (payload.type === 'draft_rewrite_error') {
-      console.error('[Persona Paths] Draft polish failed:', String(payload.error || 'Unknown error'))
+      const message = String(payload.error || 'Draft polish failed.')
+      console.error('[Persona Paths] Draft polish failed:', message)
+      finishDraftPolish(String(payload.messageId || ''), 'error', 'Polish failed — try again')
     }
     else if (payload.type === 'request_error') {
       connectionStatus.classList.add('error')

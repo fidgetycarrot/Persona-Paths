@@ -64,6 +64,7 @@ type CachedPath = {
 const CONFIG_PATH = 'config.json'
 const CACHE_PATH = 'choices.json'
 const MEMORY_PATH = 'relationship_memory.json'
+const draftRewritesInFlight = new Set<string>()
 
 const DEFAULT_CONFIG: Config = {
   enabled: true,
@@ -1609,6 +1610,9 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
       const chatId = String(payload.chatId || '')
       const messageId = String(payload.messageId || '')
       const draft = String(payload.draft || '')
+      const rewriteKey = `${userId || 'unknown'}::${chatId}::${messageId}`
+      if (draftRewritesInFlight.has(rewriteKey)) return
+      draftRewritesInFlight.add(rewriteKey)
       try {
         await handleDraftRewrite(chatId, messageId, draft, userId)
       } catch (err: any) {
@@ -1616,12 +1620,17 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
         spindle.log.error(`Persona Paths draft rewrite failed: ${message}`)
         try { spindle.toast.error(message, { title: 'Draft Polish' }) } catch {}
         spindle.sendToFrontend({ type: 'draft_rewrite_error', chatId, messageId, error: message }, userId)
+      } finally {
+        draftRewritesInFlight.delete(rewriteKey)
       }
       return
     }
 
     if (payload.type === 'manual_rewrite_latest') {
       const draft = String(payload.draft || '')
+      const rewriteKey = `${userId || 'unknown'}::manual`
+      if (draftRewritesInFlight.has(rewriteKey)) return
+      draftRewritesInFlight.add(rewriteKey)
       try {
         if (!draft.trim()) throw new Error('Write or select something in the composer before using Polish Draft.')
         if (!spindle.permissions.has('chats')) throw new Error('The Chats permission is required to resolve the active chat for Draft Polish.')
@@ -1636,6 +1645,8 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
         spindle.log.error(`Persona Paths manual draft rewrite failed: ${message}`)
         try { spindle.toast.error(message, { title: 'Draft Polish' }) } catch {}
         spindle.sendToFrontend({ type: 'draft_rewrite_error', error: message }, userId)
+      } finally {
+        draftRewritesInFlight.delete(rewriteKey)
       }
       return
     }
