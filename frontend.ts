@@ -193,8 +193,6 @@ export function setup(ctx: Ctx) {
   const cards = new Map<string, () => void>()
   const dataByMessage = new Map<string, CachedPath>()
   const widgetSignatures = new Map<string, string>()
-  const draftPolishState = new Map<string, { status: 'working' | 'success' | 'error'; message: string }>()
-  let draftPolishPending = false
   let activePathMessageId: string | null = null
   let currentState: any = null
   let saveTimer: any = null
@@ -288,6 +286,14 @@ export function setup(ctx: Ctx) {
     .pp-guidance-modal-save input { margin-top:2px; accent-color:var(--lumiverse-accent); }
     .pp-guidance-modal-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
     .pp-guidance-modal-error { min-height:1.2em; font-size:11px; color:var(--lumiverse-danger, #d97777); }
+    .pp-writer-modal { display:flex; flex-direction:column; gap:11px; min-width:0; }
+    .pp-writer-copy { margin:0; font-size:12px; line-height:1.45; color:var(--lumiverse-text-muted); }
+    .pp-writer-direction { width:100%; min-height:92px; max-height:30vh; resize:vertical; box-sizing:border-box; border:1px solid var(--lumiverse-border); border-radius:10px; background:var(--lumiverse-fill); color:var(--lumiverse-text); padding:10px 11px; font:inherit; font-size:16px; line-height:1.45; }
+    .pp-writer-result { width:100%; min-height:150px; max-height:36vh; resize:vertical; box-sizing:border-box; border:1px solid var(--lumiverse-border); border-radius:10px; background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text); padding:10px 11px; font:inherit; font-size:14px; line-height:1.45; }
+    .pp-writer-status { min-height:1.2em; font-size:11px; color:var(--lumiverse-text-muted); }
+    .pp-writer-status.error { color:var(--lumiverse-danger, #d97777); }
+    .pp-writer-history { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:10.5px; color:var(--lumiverse-text-muted); }
+    .pp-writer-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
     @media (max-width:620px), (pointer:coarse) {
       .pp-guidance-modal-input { min-height:180px; max-height:38vh; resize:none; font-size:16px; }
       .pp-guidance-modal-actions .pp-btn { min-height:42px; padding:10px 14px; }
@@ -380,6 +386,12 @@ export function setup(ctx: Ctx) {
   }
 
   let guidanceModal: any = null
+  let writerModal: any = null
+  let writerPending = false
+  let writerAnchor: { chatId: string; messageId: string } | null = null
+  let writerHistory: string[] = []
+  let writerHistoryIndex = -1
+  let selectedPathIntents: string[] = []
 
   function openGuidanceModal(chatId: string, messageId: string) {
     try {
@@ -463,6 +475,148 @@ export function setup(ctx: Ctx) {
     }
   }
 
+  function openWriterModal(chatId: string, messageId: string) {
+    try {
+      if (writerModal) {
+        try { writerModal.dismiss() } catch {}
+        writerModal = null
+      }
+      writerAnchor = { chatId, messageId }
+      const currentDraft = getComposerText()
+      writerHistory = [currentDraft]
+      writerHistoryIndex = 0
+
+      const modal = ctx.ui.showModal({
+        title: currentDraft.trim() ? 'Persona Paths · Rewrite my draft' : 'Persona Paths · Write for me',
+        width: 620,
+        maxHeight: Math.min(760, Math.max(420, window.innerHeight - 24)),
+      })
+      writerModal = modal
+
+      const wrap = ctx.dom.createElement('div', { class: 'pp-writer-modal' }) as HTMLElement
+      const copy = ctx.dom.createElement('p', { class: 'pp-writer-copy' }) as HTMLElement
+      copy.textContent = currentDraft.trim()
+        ? 'Persona Paths will preserve what you decided and smooth it into one in-character user turn.'
+        : 'The composer is empty, so Persona Paths will write a fresh in-character user turn from the current scene.'
+      const direction = ctx.dom.createElement('textarea', {
+        class: 'pp-writer-direction',
+        placeholder: 'Optional direction: less confrontational; answer her question; keep the action from Path #3; make it more playful…',
+      }) as HTMLTextAreaElement
+      direction.autocapitalize = 'sentences'
+      direction.autocomplete = 'off'
+      direction.spellcheck = true
+
+      const result = ctx.dom.createElement('textarea', { class: 'pp-writer-result' }) as HTMLTextAreaElement
+      result.value = currentDraft
+      result.placeholder = 'Generated draft will appear here.'
+      result.spellcheck = true
+
+      const status = ctx.dom.createElement('div', { class: 'pp-writer-status', role: 'status' }) as HTMLElement
+      const history = ctx.dom.createElement('div', { class: 'pp-writer-history' }) as HTMLElement
+      const prev = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
+      prev.textContent = '← Older'
+      const count = ctx.dom.createElement('span') as HTMLElement
+      const next = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
+      next.textContent = 'Newer →'
+      history.append(prev, count, next)
+
+      const actions = ctx.dom.createElement('div', { class: 'pp-writer-actions' }) as HTMLElement
+      const close = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
+      close.textContent = 'Close'
+      const restore = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
+      restore.textContent = 'Use selected draft'
+      const generate = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn pp-primary' }) as HTMLButtonElement
+      generate.textContent = currentDraft.trim() ? 'Rewrite draft' : 'Write for me'
+      actions.append(close, restore, generate)
+      wrap.append(copy, direction, result, status, history, actions)
+      modal.root.appendChild(wrap)
+
+      const updateHistoryUi = () => {
+        if (!writerHistory.length) {
+          count.textContent = 'No drafts'
+          prev.disabled = true; next.disabled = true; restore.disabled = true
+          return
+        }
+        writerHistoryIndex = Math.max(0, Math.min(writerHistoryIndex, writerHistory.length - 1))
+        result.value = writerHistory[writerHistoryIndex] || ''
+        count.textContent = `Draft ${writerHistoryIndex + 1} of ${writerHistory.length}${writerHistoryIndex === 0 ? ' · original' : ''}`
+        prev.disabled = writerHistoryIndex <= 0
+        next.disabled = writerHistoryIndex >= writerHistory.length - 1
+        restore.disabled = false
+      }
+      updateHistoryUi()
+
+      prev.addEventListener('click', () => { if (writerHistoryIndex > 0) { writerHistoryIndex--; updateHistoryUi() } })
+      next.addEventListener('click', () => { if (writerHistoryIndex < writerHistory.length - 1) { writerHistoryIndex++; updateHistoryUi() } })
+      restore.addEventListener('click', () => {
+        const value = String(result.value || '')
+        if (replaceComposer(value)) status.textContent = 'Selected draft restored to the composer.'
+      })
+      close.addEventListener('click', () => modal.dismiss())
+      generate.addEventListener('click', () => {
+        if (writerPending) return
+        const draft = getComposerText()
+        writerPending = true
+        generate.disabled = true
+        restore.disabled = true
+        prev.disabled = true
+        next.disabled = true
+        generate.textContent = draft.trim() ? 'Rewriting…' : 'Writing…'
+        status.classList.remove('error')
+        status.textContent = draft.trim() ? 'Polishing your draft with Persona Paths…' : 'Writing an in-character response with Persona Paths…'
+        ctx.sendToBackend({
+          type: 'user_writer',
+          chatId,
+          messageId,
+          draft,
+          direction: String(direction.value || '').trim(),
+          sourceIntents: selectedPathIntents.slice(0, 6),
+        })
+      })
+
+      const cleanupDismiss = modal.onDismiss(() => {
+        writerModal = null
+        writerAnchor = null
+        writerPending = false
+        try { cleanupDismiss() } catch {}
+      })
+
+      ;(modal as any).__ppWriter = { result, status, generate, restore, prev, next, updateHistoryUi }
+    } catch (err) {
+      console.error('[Persona Paths] Could not open User Writer modal', err)
+    }
+  }
+
+  function finishWriterSuccess(text: string, writerMode: string) {
+    const next = String(text || '').trim()
+    if (!next) return
+    if (!writerHistory.length) writerHistory = [getComposerText()]
+    if (writerHistory[writerHistory.length - 1] !== next) writerHistory.push(next)
+    writerHistoryIndex = writerHistory.length - 1
+    replaceComposer(next)
+    writerPending = false
+    const ui = writerModal && (writerModal as any).__ppWriter
+    if (ui) {
+      ui.status.classList.remove('error')
+      ui.status.textContent = writerMode === 'write' ? 'Fresh draft written and placed in the composer.' : 'Draft rewritten and placed in the composer.'
+      ui.generate.disabled = false
+      ui.generate.textContent = 'Generate another'
+      ui.updateHistoryUi()
+    }
+  }
+
+  function finishWriterError(message: string) {
+    writerPending = false
+    const ui = writerModal && (writerModal as any).__ppWriter
+    if (ui) {
+      ui.status.classList.add('error')
+      ui.status.textContent = message || 'User Writer failed.'
+      ui.generate.disabled = false
+      ui.generate.textContent = 'Try again'
+      ui.updateHistoryUi()
+    }
+  }
+
   function clearNonActiveWidgets(keepMessageId?: string) {
     for (const [id, cleanup] of Array.from(cards.entries())) {
       if (keepMessageId && id === keepMessageId) continue
@@ -495,7 +649,6 @@ export function setup(ctx: Ctx) {
       sceneState: model?.sceneState || null,
       choices: Array.isArray(model?.choices) ? model.choices : [],
       error: String(model?.error || ''),
-      polishState: model?.polishState || null,
       prismColor,
     }
     const signature = JSON.stringify(payload)
@@ -545,10 +698,6 @@ export function setup(ctx: Ctx) {
     border-radius:8px; width:28px; height:28px; padding:0; font-size:17px; line-height:1;
   }
   .icon:hover { background:var(--lumiverse-fill); color:var(--lumiverse-text); }
-  .icon:disabled { cursor:default; opacity:.72; }
-  .polish-working { width:auto; min-width:88px; padding:0 8px; display:inline-flex; align-items:center; justify-content:center; gap:6px; font-size:10px; }
-  .polish-spinner { width:11px; height:11px; border:1.5px solid currentColor; border-right-color:transparent; border-radius:999px; animation:spin .7s linear infinite; }
-  @keyframes spin { to { transform:rotate(360deg); } }
   .choices { display:flex; flex-direction:column; gap:7px; min-width:0; }
   .choice {
     display:block; width:100%; min-width:0; max-width:100%; text-align:left; cursor:pointer;
@@ -609,7 +758,7 @@ export function setup(ctx: Ctx) {
       <span class="style" id="style"></span>
       <span class="toast" id="toast">Added to composer</span>
       <span class="spacer"></span>
-      <button type="button" class="icon" id="polishBtn" title="Polish the current composer draft" aria-label="Polish current draft">✦</button>
+      <button type="button" class="icon" id="polishBtn" title="User Writer: write or rewrite the composer" aria-label="Open User Writer">✦</button>
       <button type="button" class="icon" id="guideBtn" title="Regenerate with guidance" aria-label="Regenerate with guidance">✎</button>
       <button type="button" class="icon" id="regenBtn" title="Regenerate choices" aria-label="Regenerate choices">↻</button>
     </div>
@@ -694,19 +843,6 @@ export function setup(ctx: Ctx) {
     toast.textContent = text; toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 1400);
   }
-  function setPolishWorking() {
-    polishBtn.disabled = true;
-    polishBtn.classList.add('polish-working');
-    polishBtn.replaceChildren();
-    const spinner = document.createElement('span'); spinner.className = 'polish-spinner'; spinner.setAttribute('aria-hidden', 'true');
-    const label = document.createElement('span'); label.textContent = 'Polishing…';
-    polishBtn.append(spinner, label);
-    polishBtn.title = 'Draft polish in progress';
-    polishBtn.setAttribute('aria-label', 'Polishing draft');
-  }
-
-  if (model.polishState?.status === 'working') setPolishWorking();
-  else if (model.polishState?.message) setTimeout(() => showToast(model.polishState.message), 0);
 
   if (model.mode === 'loading') {
     polishBtn.hidden = true; guideBtn.hidden = true; regenBtn.hidden = true;
@@ -757,11 +893,7 @@ export function setup(ctx: Ctx) {
     footerHint.hidden = false;
   }
 
-  polishBtn.addEventListener('click', () => {
-    if (polishBtn.disabled) return;
-    setPolishWorking();
-    post({ type:'rewrite' });
-  });
+  polishBtn.addEventListener('click', () => { post({ type:'rewrite' }); });
   regenBtn.addEventListener('click', () => post({ type:'regenerate' }));
   guideBtn.addEventListener('click', () => {
     // Typing inside a virtualized sandbox widget causes iOS Safari to fight
@@ -793,21 +925,17 @@ export function setup(ctx: Ctx) {
             const data = dataByMessage.get(messageId)
             const index = Number(event.index)
             const choice = data?.choices?.[index]
-            if (choice) await fillComposer(choice.text)
+            if (choice) {
+              await fillComposer(choice.text)
+              const title = String(choice.title || `Path #${index + 1}`).trim()
+              const intent = String(choice.intent || '').trim()
+              const label = intent && intent.toLowerCase() !== title.toLowerCase() ? `${title} — ${intent}` : title
+              if (label && !selectedPathIntents.includes(label)) selectedPathIntents.push(label)
+            }
             return
           }
           if (type === 'rewrite') {
-            if (draftPolishPending) return
-            const draft = getComposerText().trim()
-            draftPolishPending = true
-            draftPolishState.set(messageId, { status: 'working', message: 'Polishing…' })
-            const cached = dataByMessage.get(messageId)
-            if (cached) renderChoices(cached)
-            if (!draft) {
-              ctx.sendToBackend({ type: 'rewrite_draft', chatId, messageId, draft: '' })
-              return
-            }
-            ctx.sendToBackend({ type: 'rewrite_draft', chatId, messageId, draft })
+            openWriterModal(chatId, messageId)
             return
           }
           if (type === 'regenerate' || type === 'retry') {
@@ -869,24 +997,7 @@ export function setup(ctx: Ctx) {
       sceneState: data.sceneState,
       choices: data.choices,
       prismColor: currentState?.prismInfo?.color || data.prismColor,
-      polishState: draftPolishState.get(data.messageId) || null,
     })
-  }
-
-  function finishDraftPolish(messageId: string, status: 'success' | 'error', message: string) {
-    draftPolishPending = false
-    const targetId = messageId || activePathMessageId || ''
-    if (!targetId) return
-    draftPolishState.set(targetId, { status, message })
-    const cached = dataByMessage.get(targetId)
-    if (cached) renderChoices(cached)
-    setTimeout(() => {
-      const current = draftPolishState.get(targetId)
-      if (current?.status !== status || current.message !== message) return
-      draftPolishState.delete(targetId)
-      const latest = dataByMessage.get(targetId)
-      if (latest) renderChoices(latest)
-    }, 1800)
   }
 
   function scheduleSave(patch: any, delay = 180) {
@@ -1068,13 +1179,16 @@ export function setup(ctx: Ctx) {
   try {
     polishAction = ctx.ui.registerInputBarAction({
       id: 'polish-persona-paths-draft',
-      label: 'Polish Draft with Persona Paths',
+      label: 'User Writer with Persona Paths',
       iconSvg: PATHS_ICON,
       enabled: true,
     })
     unsubPolishAction = polishAction.onClick(() => {
-      const draft = getComposerText().trim()
-      ctx.sendToBackend({ type: 'manual_rewrite_latest', draft })
+      if (activePathMessageId) {
+        const data = dataByMessage.get(activePathMessageId)
+        if (data?.chatId) { openWriterModal(data.chatId, activePathMessageId); return }
+      }
+      ctx.sendToBackend({ type: 'resolve_writer_latest' })
     })
   } catch {}
 
@@ -1337,6 +1451,7 @@ export function setup(ctx: Ctx) {
         : 'Manual Persona Paths generation is running.'
     }
     else if (payload.type === 'choices_loading') {
+      selectedPathIntents = []
       renderLoading(String(payload.messageId), String(payload.chatId))
       if (manualPending) manualRun.textContent = 'Generating latest reply…'
     }
@@ -1380,15 +1495,18 @@ export function setup(ctx: Ctx) {
       manualStatus.classList.add('error')
       manualStatus.textContent = String(payload.error || 'Manual Persona Paths generation failed.')
     }
+    else if (payload.type === 'writer_anchor') {
+      const chatId = String(payload.chatId || '')
+      const messageId = String(payload.messageId || '')
+      if (chatId && messageId) openWriterModal(chatId, messageId)
+    }
     else if (payload.type === 'draft_rewrite_ready') {
-      const text = String(payload.text || '').trim()
-      if (text) replaceComposer(text)
-      finishDraftPolish(String(payload.messageId || ''), 'success', 'Draft polished ✓')
+      finishWriterSuccess(String(payload.text || ''), String(payload.writerMode || 'rewrite'))
     }
     else if (payload.type === 'draft_rewrite_error') {
-      const message = String(payload.error || 'Draft polish failed.')
-      console.error('[Persona Paths] Draft polish failed:', message)
-      finishDraftPolish(String(payload.messageId || ''), 'error', 'Polish failed — try again')
+      const message = String(payload.error || 'User Writer failed.')
+      console.error('[Persona Paths] User Writer failed:', message)
+      finishWriterError(message)
     }
     else if (payload.type === 'request_error') {
       connectionStatus.classList.add('error')
@@ -1496,6 +1614,12 @@ export function setup(ctx: Ctx) {
         try { guidanceModal.dismiss() } catch {}
         guidanceModal = null
       }
+      if (writerModal) { try { writerModal.dismiss() } catch {}; writerModal = null }
+      writerPending = false
+      writerAnchor = null
+      writerHistory = []
+      writerHistoryIndex = -1
+      selectedPathIntents = []
       for (const messageId of Array.from(choiceTimers.keys())) cancelChoiceTimer(messageId)
       for (const messageId of Array.from(renderFallbackTimers.keys())) cancelChoiceTimer(messageId)
       awaitingRender.clear()
@@ -1525,6 +1649,7 @@ export function setup(ctx: Ctx) {
       try { guidanceModal.dismiss() } catch {}
       guidanceModal = null
     }
+    if (writerModal) { try { writerModal.dismiss() } catch {}; writerModal = null }
     unsubBackend()
     for (const messageId of Array.from(choiceTimers.keys())) cancelChoiceTimer(messageId)
     for (const messageId of Array.from(renderFallbackTimers.keys())) cancelChoiceTimer(messageId)

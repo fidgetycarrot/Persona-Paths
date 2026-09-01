@@ -64,7 +64,6 @@ type CachedPath = {
 const CONFIG_PATH = 'config.json'
 const CACHE_PATH = 'choices.json'
 const MEMORY_PATH = 'relationship_memory.json'
-const draftRewritesInFlight = new Set<string>()
 
 const DEFAULT_CONFIG: Config = {
   enabled: true,
@@ -870,10 +869,10 @@ function buildUserPrompt(args: {
 
   const guidance = String(regenerationGuidance || '').trim()
   const rejectedBlock = rejectedChoices.length
-    ? rejectedChoices.slice(0, 8).map((choice, i) => `REJECTED PATH ${i + 1} — ${choice.title || choice.intent || 'Untitled'}:\n${compactText(cleanRoleplayText(choice.text), 1800)}`).join('\n\n')
+    ? rejectedChoices.slice(0, 8).map((choice, i) => `PATH #${i + 1} — ${choice.title || choice.intent || 'Untitled'}:\n${compactText(cleanRoleplayText(choice.text), 1800)}`).join('\n\n')
     : '(none)'
   const regenerationBlock = guidance
-    ? `\n\nGUIDED REGENERATION REQUEST FROM THE HUMAN\n${guidance}\n\nPREVIOUS PATHS THE HUMAN REJECTED\n${rejectedBlock}\n\nUse the guidance as a directional preference, correction, or possibility — not as a requirement that every new option perform the exact same action. Produce genuinely new trajectories rather than paraphrasing the rejected paths. If the guidance corrects characterization, naming, relationship behavior, or voice, obey that correction throughout all choices.`
+    ? `\n\nGUIDED REGENERATION REQUEST FROM THE HUMAN\n${guidance}\n\nPREVIOUS PATHS (NUMBERED FOR HUMAN REFERENCES)\n${rejectedBlock}\n\nWhen the human refers to #1, #2, etc., those numbers refer exactly to the numbered PREVIOUS PATHS above. Use the guidance as a directional preference, correction, or possibility — not as a requirement that every new option perform the exact same action. Produce genuinely new trajectories rather than paraphrasing the rejected paths. If the guidance corrects characterization, naming, relationship behavior, or voice, obey that correction throughout all choices.`
     : ''
 
   return `PLAYER PERSONA\n${personaBlock}
@@ -1119,22 +1118,25 @@ Generate the answer again from scratch. Return one corrected JSON object only. P
   return parsed
 }
 
-function buildDraftRewriteSystemPrompt(cfg: Config) {
+function buildUserWriterSystemPrompt(cfg: Config, hasDraft: boolean) {
   const requestedPov = cfg.pov === 'auto'
-    ? 'Preserve the POV/person used in the DRAFT. If the draft is ambiguous, infer it from recent USER turns.'
+    ? (hasDraft ? 'Preserve the POV/person used in the DRAFT. If the draft is ambiguous, infer it from recent USER turns.' : 'Infer POV/person from recent USER turns; default to first person if ambiguous.')
     : `Keep the rewritten draft in ${cfg.pov} person unless the human deliberately wrote otherwise.`
   const requestedTense = cfg.tense === 'auto'
-    ? 'Preserve the tense used in the DRAFT. If ambiguous, infer it from recent USER turns.'
+    ? (hasDraft ? 'Preserve the tense used in the DRAFT. If ambiguous, infer it from recent USER turns.' : 'Infer tense from recent USER turns; default to present tense if ambiguous.')
     : `Keep the rewritten draft in ${cfg.tense} tense unless the human deliberately wrote otherwise.`
 
-  return `You are Persona Paths Draft Polish. Rewrite a HUMAN PLAYER'S partially edited role-play response into one smooth, paste-ready USER turn.
+  const task = hasDraft
+    ? `Rewrite a HUMAN PLAYER'S partially edited role-play response into one smooth, paste-ready USER turn. The human may have selected one or more Persona Paths suggestions, manually changed them, added new ideas, or written the whole draft themselves. Their draft is the authority for WHAT they intend to do.`
+    : `Write the HUMAN PLAYER'S next in-character role-play turn from scratch. Use the current scene, persona, recent portrayal, guidance, and story memory to produce a plausible user-side continuation. Do not write the assistant/NPC side of the scene.`
 
-The human may have selected one or more Persona Paths suggestions, manually changed them, added new ideas, or written the whole draft themselves. Their draft is the authority for WHAT they intend to do.
+  return `You are Persona Paths User Writer. ${task}
 
 PRESERVATION RULES
 - Preserve every meaningful decision, action, intention, factual assertion, named person, destination, refusal, promise, emotional choice, and user-added idea in the draft unless it is an obvious duplicate caused by concatenating Paths.
 - Smooth transitions, remove accidental repetition, reconcile pronouns, and make combined fragments read like one naturally authored turn.
-- Do NOT replace the human's idea with a different or "better" choice. This is rewriting, not next-move generation.
+- When a draft exists, do NOT replace the human's idea with a different or "better" choice. This is rewriting, not next-move generation.
+- When no draft exists, choose a plausible in-character direction that responds directly to CURRENT MOMENT; do not merely summarize the scene.
 - Do NOT make the persona nicer, safer, calmer, more polite, more cautious, or more generic than the draft/persona establishes.
 - Do NOT invent other characters' dialogue, reactions, thoughts, decisions, consent, or future behavior.
 - Do NOT invent world outcomes, discoveries, success/failure, or time skips that the human did not write.
@@ -1150,11 +1152,11 @@ VOICE & FORMATTING
 - ${requestedTense}
 - Spoken dialogue must use “double curly quotation marks” (or straight double quotes if already present), never ‘single curly dialogue quotes’.
 - Direct inner thoughts are optional and rare; format them as *single-asterisk italics*, never quotation marks.
-- Preserve the draft's established explicitness rather than sanitizing or gratuitously escalating it.
-- Return ONLY the rewritten USER turn as plain Markdown text. No JSON, title, label, explanation, critique, notes, or quotation fence.`
+- Preserve the scene/draft's established explicitness rather than sanitizing or gratuitously escalating it.
+- Return ONLY the finished USER turn as plain Markdown text. No JSON, title, label, explanation, critique, notes, or quotation fence.`
 }
 
-function buildDraftRewritePrompt(args: {
+function buildUserWriterPrompt(args: {
   persona: any
   personaOverride: string
   memoryNotes: string[]
@@ -1162,6 +1164,8 @@ function buildDraftRewritePrompt(args: {
   sceneMessages: any[]
   storyMemory: StoryMemoryContext
   draft: string
+  direction?: string
+  sourceIntents?: string[]
 }) {
   const personaBlock = args.persona
     ? `NAME: ${args.persona.name || 'Unnamed'}\nTITLE: ${args.persona.title || ''}\nDESCRIPTION:\n${compactText(args.persona.description || '(none)', 6000)}`
@@ -1197,15 +1201,16 @@ CURRENT ROLE-PLAY SCENE\n${scene}
 
 CURRENT MOMENT — END OF LATEST ASSISTANT REPLY\n${currentMoment}
 
-DRAFT TO POLISH — PRESERVE ITS INTENT AND CONTENT\n${String(args.draft || '').trim()}
-
-Rewrite that draft into one seamless USER turn. Preserve the human's choices and added ideas; fix prose, flow, duplicated seams, and voice only.`
+${String(args.direction || '').trim() ? `ONE-SHOT WRITING DIRECTION FROM THE HUMAN\n${String(args.direction || '').trim()}\n` : ''}
+${Array.isArray(args.sourceIntents) && args.sourceIntents.length ? `SOURCE PATH INTENTS TO PRESERVE\n${args.sourceIntents.slice(0, 6).map((x, i) => `#${i + 1}: ${x}`).join('\n')}\n` : ''}
+${String(args.draft || '').trim()
+  ? `DRAFT TO REWRITE — PRESERVE ITS INTENT AND CONTENT\n${String(args.draft || '').trim()}\n\nRewrite that draft into one seamless USER turn. Preserve the human's choices and added ideas; fix prose, flow, duplicated seams, and voice only.`
+  : `NO DRAFT WAS PROVIDED.\nWrite one complete, paste-ready USER turn from scratch. Respond directly to CURRENT MOMENT, stay faithful to the persona and relationship context, and do not invent NPC/world outcomes.`}`
 }
-
-async function handleDraftRewrite(chatId: string, messageId: string, draft: string, userId?: string) {
+async function handleUserWriter(chatId: string, messageId: string, draft: string, direction = '', sourceIntents: string[] = [], userId?: string) {
   const cleanDraft = cleanGeneratedChoiceText(draft)
-  if (!cleanDraft) throw new Error('Write or select something in the composer before using Polish Draft.')
-  if (!chatId || !messageId) throw new Error('Persona Paths needs the current chat and assistant reply to polish this draft.')
+  const cleanDirection = String(direction || '').trim()
+  if (!chatId || !messageId) throw new Error('Persona Paths needs the current chat and assistant reply for User Writer.')
 
   const messages = await spindle.chat.getMessages(chatId)
   const target = messages.find((m: any) => String(m?.id || '') === messageId)
@@ -1246,8 +1251,8 @@ async function handleDraftRewrite(chatId: string, messageId: string, draft: stri
     connection_id: conn.id,
     userId,
     messages: [
-      { role: 'system', content: buildDraftRewriteSystemPrompt(config) },
-      { role: 'user', content: buildDraftRewritePrompt({
+      { role: 'system', content: buildUserWriterSystemPrompt(config, !!cleanDraft) },
+      { role: 'user', content: buildUserWriterPrompt({
           persona,
           personaOverride: persona?.id ? (config.personaOverrides[persona.id] || '') : '',
           memoryNotes,
@@ -1255,6 +1260,8 @@ async function handleDraftRewrite(chatId: string, messageId: string, draft: stri
           sceneMessages,
           storyMemory,
           draft: cleanDraft,
+          direction: cleanDirection,
+          sourceIntents,
         }) },
     ],
     parameters: tuning.params,
@@ -1263,12 +1270,12 @@ async function handleDraftRewrite(chatId: string, messageId: string, draft: stri
 
   const response = await spindle.generate.raw(request)
   const raw = String(response?.content || '').trim()
-  if (!raw) throw new Error(`Draft-polish model returned no final content${response?.finish_reason ? ` (finish reason: ${response.finish_reason})` : ''}.`)
+  if (!raw) throw new Error(`User Writer model returned no final content${response?.finish_reason ? ` (finish reason: ${response.finish_reason})` : ''}.`)
   const rewritten = cleanGeneratedChoiceText(stripFences(raw))
-  if (!rewritten) throw new Error('Draft-polish model returned an empty rewrite.')
+  if (!rewritten) throw new Error('User Writer model returned an empty response.')
 
-  spindle.sendToFrontend({ type: 'draft_rewrite_ready', chatId, messageId, text: rewritten }, userId)
-  try { spindle.toast.success('Draft polished.') } catch {}
+  spindle.sendToFrontend({ type: 'draft_rewrite_ready', chatId, messageId, text: rewritten, writerMode: cleanDraft ? 'rewrite' : 'write' }, userId)
+  try { spindle.toast.success(cleanDraft ? 'Draft polished.' : 'Draft written.') } catch {}
 }
 
 async function handleAssistantMessage(chatId: string, messageId: string, force = false, userId?: string, regenerationGuidance = '', saveAsPersonaGuidance = false, allowOocOverride = false) {
@@ -1606,48 +1613,52 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
       return
     }
 
-    if (payload.type === 'rewrite_draft') {
+    if (payload.type === 'rewrite_draft' || payload.type === 'user_writer') {
       const chatId = String(payload.chatId || '')
       const messageId = String(payload.messageId || '')
       const draft = String(payload.draft || '')
-      const rewriteKey = `${userId || 'unknown'}::${chatId}::${messageId}`
-      if (draftRewritesInFlight.has(rewriteKey)) return
-      draftRewritesInFlight.add(rewriteKey)
+      const direction = String(payload.direction || '')
+      const sourceIntents = Array.isArray(payload.sourceIntents) ? payload.sourceIntents.map((x: any) => String(x)).filter(Boolean).slice(0, 6) : []
       try {
-        await handleDraftRewrite(chatId, messageId, draft, userId)
+        await handleUserWriter(chatId, messageId, draft, direction, sourceIntents, userId)
       } catch (err: any) {
         const message = err?.message || String(err)
-        spindle.log.error(`Persona Paths draft rewrite failed: ${message}`)
-        try { spindle.toast.error(message, { title: 'Draft Polish' }) } catch {}
+        spindle.log.error(`Persona Paths User Writer failed: ${message}`)
+        try { spindle.toast.error(message, { title: 'User Writer' }) } catch {}
         spindle.sendToFrontend({ type: 'draft_rewrite_error', chatId, messageId, error: message }, userId)
-      } finally {
-        draftRewritesInFlight.delete(rewriteKey)
       }
       return
     }
 
-    if (payload.type === 'manual_rewrite_latest') {
+    if (payload.type === 'manual_rewrite_latest' || payload.type === 'manual_user_writer_latest') {
       const draft = String(payload.draft || '')
-      const rewriteKey = `${userId || 'unknown'}::manual`
-      if (draftRewritesInFlight.has(rewriteKey)) return
-      draftRewritesInFlight.add(rewriteKey)
+      const direction = String(payload.direction || '')
+      const sourceIntents = Array.isArray(payload.sourceIntents) ? payload.sourceIntents.map((x: any) => String(x)).filter(Boolean).slice(0, 6) : []
       try {
-        if (!draft.trim()) throw new Error('Write or select something in the composer before using Polish Draft.')
-        if (!spindle.permissions.has('chats')) throw new Error('The Chats permission is required to resolve the active chat for Draft Polish.')
+        if (!spindle.permissions.has('chats')) throw new Error('The Chats permission is required to resolve the active chat for User Writer.')
         const activeChat = await spindle.chats.getActive(userId)
-        if (!activeChat?.id) throw new Error('Open a Lumiverse chat before using Draft Polish.')
+        if (!activeChat?.id) throw new Error('Open a Lumiverse chat before using User Writer.')
         const messages = await spindle.chat.getMessages(activeChat.id)
         const latestAssistant = [...messages].reverse().find((m: any) => m?.role === 'assistant' && String(m?.content || '').trim())
-        if (!latestAssistant?.id) throw new Error('The active chat does not have an assistant reply to anchor this draft rewrite.')
-        await handleDraftRewrite(String(activeChat.id), String(latestAssistant.id), draft, userId)
+        if (!latestAssistant?.id) throw new Error('The active chat does not have an assistant reply to anchor User Writer.')
+        await handleUserWriter(String(activeChat.id), String(latestAssistant.id), draft, direction, sourceIntents, userId)
       } catch (err: any) {
         const message = err?.message || String(err)
-        spindle.log.error(`Persona Paths manual draft rewrite failed: ${message}`)
-        try { spindle.toast.error(message, { title: 'Draft Polish' }) } catch {}
+        spindle.log.error(`Persona Paths manual User Writer failed: ${message}`)
+        try { spindle.toast.error(message, { title: 'User Writer' }) } catch {}
         spindle.sendToFrontend({ type: 'draft_rewrite_error', error: message }, userId)
-      } finally {
-        draftRewritesInFlight.delete(rewriteKey)
       }
+      return
+    }
+
+    if (payload.type === 'resolve_writer_latest') {
+      if (!spindle.permissions.has('chats')) throw new Error('The Chats permission is required to resolve the active chat for User Writer.')
+      const activeChat = await spindle.chats.getActive(userId)
+      if (!activeChat?.id) throw new Error('Open a Lumiverse chat before using User Writer.')
+      const messages = await spindle.chat.getMessages(activeChat.id)
+      const latestAssistant = [...messages].reverse().find((m: any) => m?.role === 'assistant' && String(m?.content || '').trim())
+      if (!latestAssistant?.id) throw new Error('The active chat does not have an assistant reply to anchor User Writer.')
+      spindle.sendToFrontend({ type: 'writer_anchor', chatId: String(activeChat.id), messageId: String(latestAssistant.id) }, userId)
       return
     }
 
