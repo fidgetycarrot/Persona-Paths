@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.31';
+const EXT_VERSION = '0.1.32';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -344,6 +344,9 @@ export function setup(ctx) {
     .pp-launcher.writer { flex:0 0 38px; width:38px; padding:0; border-left:1px solid var(--lumiverse-border); font-size:17px; }
     .pp-launcher svg { width:16px; height:16px; color:var(--lumiverse-accent, currentColor); flex:0 0 auto; }
     .pp-native-select-slot { width:100%; min-width:0; }
+    .pp-model-tools { display:flex; align-items:center; gap:8px; margin-top:-7px; flex-wrap:wrap; }
+    .pp-model-tools .pp-connection-status { margin-top:0; flex:1 1 220px; }
+    .pp-settings [hidden] { display:none !important; }
     .pp-version { font-size:10px; color:var(--lumiverse-text-muted); opacity:.7; margin-top:-8px; }
     @media (max-width: 620px) { .pp-grid { grid-template-columns:1fr; } .pp-choice-text { font-size:12px; } }
   `);
@@ -1221,6 +1224,72 @@ export function setup(ctx) {
         unsubPolishAction = polishAction.onClick(triggerUserWriter);
     }
     catch { }
+    const CONNECTION_MODEL = '__connection_model__';
+    const MANUAL_MODEL = '__manual_model__';
+    let openRouterModels = [];
+    let openRouterCatalogPending = false;
+    let openRouterCatalogError = '';
+    let openRouterFetchedAt = 0;
+    function isOpenRouterConnection(conn) {
+        const provider = String(conn?.provider || '').toLowerCase();
+        const apiUrl = String(conn?.api_url || conn?.apiUrl || '').toLowerCase();
+        return provider.includes('openrouter') || apiUrl.includes('openrouter.ai');
+    }
+    function formatContextLength(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n <= 0)
+            return '';
+        if (n >= 1_000_000) {
+            const m = n / 1_000_000;
+            return `${Number.isInteger(m) ? m.toFixed(0) : m.toFixed(1)}M context`;
+        }
+        if (n >= 1_000)
+            return `${Math.round(n / 1000)}K context`;
+        return `${Math.round(n)} context`;
+    }
+    function catalogOptions(conn, override) {
+        const useConnection = {
+            value: CONNECTION_MODEL,
+            label: 'Use connection model',
+            sublabel: String(conn?.model || 'Follow the selected connection profile'),
+        };
+        const modelOptions = openRouterModels.map(model => {
+            const bits = [model.id];
+            const context = formatContextLength(model.contextLength);
+            if (context)
+                bits.push(context);
+            if (model.reasoning)
+                bits.push('reasoning');
+            return { value: model.id, label: model.name || model.id, sublabel: bits.join(' · ') };
+        });
+        if (override) {
+            const index = modelOptions.findIndex(opt => opt.value === override);
+            if (index > 0) {
+                const [selected] = modelOptions.splice(index, 1);
+                modelOptions.unshift(selected);
+            }
+        }
+        return [
+            useConnection,
+            ...modelOptions,
+            { value: MANUAL_MODEL, label: 'Manual model ID…', sublabel: 'Paste an exact model ID that is not in the catalog' },
+        ];
+    }
+    function requestOpenRouterCatalog(force = false) {
+        if (openRouterCatalogPending)
+            return;
+        if (!currentState?.corsGranted) {
+            openRouterCatalogError = 'Grant the CORS Proxy permission to load OpenRouter models. Manual model IDs still work.';
+            updateModelPickers();
+            return;
+        }
+        if (!force && openRouterModels.length)
+            return;
+        openRouterCatalogPending = true;
+        openRouterCatalogError = '';
+        updateModelPickers();
+        ctx.sendToBackend({ type: 'get_openrouter_models', force });
+    }
     const connectionSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' });
     settings.appendChild(createLabeledField(ctx, 'Persona Paths connection', connectionSlot, 'Connection used to generate the CYOA Path choices. This can stay completely separate from your story model.'));
     const connectionPicker = ctx.components.mountSelect(connectionSlot, {
@@ -1246,9 +1315,45 @@ export function setup(ctx) {
         ctx.sendToBackend({ type: 'get_state' });
     });
     settings.appendChild(refreshConnections);
-    const modelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'Leave blank to use connection model' });
+    const modelSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' });
+    const modelField = createLabeledField(ctx, 'Paths model', modelSlot, 'OpenRouter connections get a live searchable model catalog. Choose Use connection model to follow the connection profile.');
+    settings.appendChild(modelField);
+    const modelPicker = ctx.components.mountSelect(modelSlot, {
+        value: CONNECTION_MODEL,
+        options: [],
+        placeholder: 'Use connection model',
+        searchPlaceholder: 'Search OpenRouter models…',
+        noResultsMessage: 'No matching models.',
+        emptyMessage: 'Model catalog unavailable.',
+        portal: true,
+        maxHeight: 420,
+        minWidth: 340,
+        onChange: (value) => {
+            if (value === CONNECTION_MODEL)
+                scheduleSave({ modelOverride: '' }, 0);
+            else if (value === MANUAL_MODEL) {
+                modelOverrideWrap.hidden = false;
+                setTimeout(() => modelOverride.focus(), 0);
+            }
+            else
+                scheduleSave({ modelOverride: value }, 0);
+        },
+    });
+    const modelCatalogStatus = ctx.dom.createElement('div', { class: 'pp-connection-status' });
+    const refreshModels = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' });
+    refreshModels.textContent = 'Refresh OpenRouter models';
+    refreshModels.addEventListener('click', () => {
+        openRouterModels = [];
+        openRouterCatalogError = '';
+        requestOpenRouterCatalog(true);
+    });
+    const modelTools = ctx.dom.createElement('div', { class: 'pp-model-tools' });
+    modelTools.append(modelCatalogStatus, refreshModels);
+    settings.appendChild(modelTools);
+    const modelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'e.g. google/gemini-3.1-pro-preview' });
     modelOverride.addEventListener('input', () => scheduleSave({ modelOverride: modelOverride.value }));
-    settings.appendChild(createLabeledField(ctx, 'Paths model override', modelOverride, 'Optional exact model ID for Path generation. Blank follows the selected Paths connection profile.'));
+    const modelOverrideWrap = createLabeledField(ctx, 'Manual Paths model ID', modelOverride, 'Fallback for aliases, custom IDs, or models not present in OpenRouter’s public catalog.');
+    settings.appendChild(modelOverrideWrap);
     const writerDivider = ctx.dom.createElement('div', { class: 'pp-divider' });
     settings.appendChild(writerDivider);
     const writerHeading = ctx.dom.createElement('h3');
@@ -1273,9 +1378,95 @@ export function setup(ctx) {
     const writerConnectionStatus = ctx.dom.createElement('div', { class: 'pp-connection-status' });
     writerConnectionStatus.textContent = 'User Writer currently follows the Persona Paths connection.';
     settings.appendChild(writerConnectionStatus);
-    const writerModelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'Leave blank to use writer connection model' });
+    const writerModelSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' });
+    settings.appendChild(createLabeledField(ctx, 'User Writer model', writerModelSlot, 'When the resolved writer connection is OpenRouter, search the live model catalog by friendly name or exact model ID.'));
+    const writerModelPicker = ctx.components.mountSelect(writerModelSlot, {
+        value: CONNECTION_MODEL,
+        options: [],
+        placeholder: 'Use writer connection model',
+        searchPlaceholder: 'Search OpenRouter models…',
+        noResultsMessage: 'No matching models.',
+        emptyMessage: 'Model catalog unavailable.',
+        portal: true,
+        maxHeight: 420,
+        minWidth: 340,
+        onChange: (value) => {
+            if (value === CONNECTION_MODEL)
+                scheduleSave({ writerModelOverride: '' }, 0);
+            else if (value === MANUAL_MODEL) {
+                writerModelOverrideWrap.hidden = false;
+                setTimeout(() => writerModelOverride.focus(), 0);
+            }
+            else
+                scheduleSave({ writerModelOverride: value }, 0);
+        },
+    });
+    const writerModelCatalogStatus = ctx.dom.createElement('div', { class: 'pp-connection-status' });
+    settings.appendChild(writerModelCatalogStatus);
+    const writerModelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'e.g. anthropic/claude-sonnet-5' });
     writerModelOverride.addEventListener('input', () => scheduleSave({ writerModelOverride: writerModelOverride.value }));
-    settings.appendChild(createLabeledField(ctx, 'Writer model override', writerModelOverride, 'Optional exact model ID used only by Write For Me / Rewrite.'));
+    const writerModelOverrideWrap = createLabeledField(ctx, 'Manual Writer model ID', writerModelOverride, 'Fallback for aliases, custom IDs, or models not present in OpenRouter’s public catalog.');
+    settings.appendChild(writerModelOverrideWrap);
+    function updateOneModelPicker(picker, manualWrap, status, conn, override, writer = false) {
+        const openRouter = isOpenRouterConnection(conn);
+        const exactOverride = String(override || '').trim();
+        if (!openRouter) {
+            picker.update({
+                value: exactOverride ? MANUAL_MODEL : CONNECTION_MODEL,
+                options: [
+                    { value: CONNECTION_MODEL, label: writer ? 'Use writer connection model' : 'Use connection model', sublabel: String(conn?.model || 'Follow the selected connection profile') },
+                    { value: MANUAL_MODEL, label: 'Manual model ID…', sublabel: 'Searchable catalogs are currently available for OpenRouter connections' },
+                ],
+            });
+            manualWrap.hidden = !exactOverride;
+            status.classList.remove('error');
+            status.textContent = conn
+                ? `${String(conn.provider || 'This provider')} does not expose a searchable text-model catalog to Persona Paths; manual override remains available.`
+                : 'Choose a connection to configure a model.';
+            return;
+        }
+        const hasCatalogMatch = !!exactOverride && openRouterModels.some(model => model.id === exactOverride);
+        picker.update({
+            value: !exactOverride ? CONNECTION_MODEL : (hasCatalogMatch ? exactOverride : MANUAL_MODEL),
+            options: catalogOptions(conn, exactOverride),
+        });
+        manualWrap.hidden = !exactOverride || hasCatalogMatch;
+        if (openRouterCatalogPending) {
+            status.classList.remove('error');
+            status.textContent = 'Loading OpenRouter’s searchable model catalog…';
+        }
+        else if (openRouterCatalogError) {
+            status.classList.add('error');
+            status.textContent = openRouterCatalogError;
+        }
+        else if (openRouterModels.length) {
+            status.classList.remove('error');
+            const age = openRouterFetchedAt ? Math.max(0, Math.round((Date.now() - openRouterFetchedAt) / 60000)) : 0;
+            status.textContent = `${openRouterModels.length} OpenRouter text models loaded${age ? ` · refreshed ${age}m ago` : ''}. Search by model name or exact ID.`;
+        }
+        else {
+            status.classList.remove('error');
+            status.textContent = 'OpenRouter connection detected. Loading searchable models…';
+        }
+    }
+    function updateModelPickers() {
+        const state = currentState || {};
+        const cfg = state.config || {};
+        const conns = Array.isArray(state.connections) ? state.connections : [];
+        const selectedConnection = cfg.connectionId && conns.some((c) => c.id === cfg.connectionId)
+            ? cfg.connectionId
+            : (conns.find((c) => c.is_default) || conns[0])?.id || '';
+        const pathsConn = conns.find((c) => String(c.id) === String(selectedConnection));
+        const writerConn = cfg.writerConnectionId
+            ? (conns.find((c) => String(c.id) === String(cfg.writerConnectionId)) || pathsConn)
+            : pathsConn;
+        updateOneModelPicker(modelPicker, modelOverrideWrap, modelCatalogStatus, pathsConn, cfg.modelOverride || '', false);
+        updateOneModelPicker(writerModelPicker, writerModelOverrideWrap, writerModelCatalogStatus, writerConn, cfg.writerModelOverride || '', true);
+        const needsCatalog = isOpenRouterConnection(pathsConn) || isOpenRouterConnection(writerConn);
+        refreshModels.hidden = !needsCatalog;
+        if (needsCatalog && !openRouterModels.length && !openRouterCatalogPending && !openRouterCatalogError)
+            requestOpenRouterCatalog(false);
+    }
     const writerTuningGrid = ctx.dom.createElement('div', { class: 'pp-grid' });
     const writerTemperature = ctx.dom.createElement('input', { type: 'number', min: '0', max: '2', step: '0.05' });
     writerTemperature.addEventListener('change', () => scheduleSave({ writerTemperature: Number(writerTemperature.value) }, 0));
@@ -1501,6 +1692,7 @@ export function setup(ctx) {
         writerConnectionStatus.textContent = writerConnectionId === '__same_as_paths__'
             ? `Following Persona Paths${chosenWriterConn ? ` · ${String(chosenWriterConn.name || chosenWriterConn.model || '')}` : ''}.`
             : `Independent writer connection${chosenWriterConn ? ` · ${String(chosenWriterConn.name || chosenWriterConn.model || '')}` : ''}.`;
+        updateModelPickers();
         const connectionError = String(state?.connectionError || '');
         if (connectionError) {
             connectionStatus.classList.add('error');
@@ -1522,6 +1714,18 @@ export function setup(ctx) {
             return;
         if (payload.type === 'state')
             applyState(payload);
+        else if (payload.type === 'openrouter_models') {
+            openRouterCatalogPending = false;
+            openRouterCatalogError = '';
+            openRouterModels = Array.isArray(payload.models) ? payload.models : [];
+            openRouterFetchedAt = Number(payload.fetchedAt || Date.now());
+            updateModelPickers();
+        }
+        else if (payload.type === 'openrouter_models_error') {
+            openRouterCatalogPending = false;
+            openRouterCatalogError = String(payload.error || 'Could not load OpenRouter models. Manual model IDs still work.');
+            updateModelPickers();
+        }
         else if (payload.type === 'manual_target') {
             manualRun.textContent = 'Generating latest reply…';
             manualStatus.classList.remove('error');
@@ -1817,7 +2021,15 @@ export function setup(ctx) {
         }
         catch { }
         try {
+            modelPicker?.destroy?.();
+        }
+        catch { }
+        try {
             writerConnectionPicker?.destroy?.();
+        }
+        catch { }
+        try {
+            writerModelPicker?.destroy?.();
         }
         catch { }
         try {

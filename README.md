@@ -1,5 +1,16 @@
 # Persona Paths
 
+## v0.1.32 — searchable OpenRouter model pickers
+
+- Replaces the copy/paste-only model override workflow with **searchable model pickers** for OpenRouter connections in both Persona Paths and User Writer.
+- The picker loads OpenRouter’s public live model catalog through Lumiverse’s server-side CORS proxy, filters it to text-output models, and lets you search by friendly model name or exact OpenRouter ID.
+- Each model entry shows the exact ID plus useful catalog metadata such as context length and reasoning support when OpenRouter reports it.
+- **Use connection model** remains the default, so existing connection profiles continue working without an override. Existing saved overrides are preserved automatically.
+- **Manual model ID…** remains available for aliases, custom IDs, brand-new models, or catalog failures. Non-OpenRouter connections keep this manual fallback.
+- The selected override is moved near the top of the model results for faster switching, and the OpenRouter catalog is cached for one hour with a manual refresh button.
+- Adds the `cors_proxy` permission solely to retrieve OpenRouter’s public model catalog; Persona Paths still never receives or exposes the API key stored in your Lumiverse connection.
+- Keeps the independent User Writer connection/model introduced in v0.1.31 and all latest-widget-only performance safeguards.
+
 ## v0.1.31 — independent User Writer model + always-available writer
 
 - **User Writer no longer depends on a Persona Paths card.** The host-managed floating launcher now has a persistent `✦` button next to `Paths`; it works even when automatic Paths are disabled, skipped, blocked by the provider, or fail. The existing card button and Lumiverse Extras action remain available too.
@@ -45,7 +56,7 @@ Optimizes Persona Paths for Lumiverse's current virtualized message list. Older 
 
 v0.1.26 keeps **at most one Path widget active: the latest actionable assistant reply**. Historical choices remain saved privately but are no longer mounted while scrolling. Message remounts do no backend work, identical widget payloads are render-deduplicated, chat restore loads only the latest cached Path, and starting a new story generation retires the previous widget immediately. All v0.1.25 features — Current Moment anchoring, Memory Cortex, Draft Polish, Prism, guided regeneration, combining Paths, etc. — remain intact.
 
-Version 0.1.31
+Version 0.1.32
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -75,7 +86,7 @@ The editable TypeScript sources are also kept at root (`backend.ts`, `frontend.t
 - Choices control only the player's persona; NPC reactions, discoveries, consequences, and world state remain with the story model.
 - Configurable Auto/First/Second/Third person and Auto/Present/Past tense.
 - Configurable Compact/Normal/Detailed choice length and 3–6 choices.
-- Separate Persona Paths and User Writer Lumiverse LLM connections, each with optional model overrides; User Writer also has independent temperature/token/reasoning tuning.
+- Separate Persona Paths and User Writer Lumiverse LLM connections, with searchable OpenRouter model pickers plus manual override fallback; User Writer also has independent temperature/token/reasoning tuning.
 - Private relationship memory.
 - Swipe-aware choice regeneration.
 - Click-to-append composer without auto-send, allowing multiple Paths to be combined in one user turn.
@@ -95,13 +106,14 @@ The panel displays its installed extension version.
 Persona Paths requests only:
 
 - `generation`
+- `cors_proxy` — loads OpenRouter’s public model catalog for the searchable model pickers; no stored API key is exposed
 - `personas`
 - `chats` — resolves the active chat for manual generation and provides read-only chat-memory fallback
 - `memories` — read-only Memory Cortex retrieval (the permission itself is broader; Persona Paths does not mutate memory state)
 - `chat_mutation`
 - `ui_panels` — only for Lumiverse's native draggable floating launcher
 
-It does not request interceptor or context-handler permissions.
+It does not request interceptor or context-handler permissions. The new CORS proxy access is used only for the public OpenRouter model-list request.
 
 ## Build
 

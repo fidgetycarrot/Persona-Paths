@@ -24,6 +24,13 @@ type StoryMemoryContext = {
   note?: string
 }
 
+type OpenRouterModel = {
+  id: string
+  name: string
+  contextLength: number
+  reasoning: boolean
+}
+
 type Config = {
   enabled: boolean
   choiceCount: number
@@ -104,6 +111,69 @@ let config: Config = { ...DEFAULT_CONFIG }
 let cache: Record<string, CachedPath> = {}
 let relationshipMemory: Record<string, { subjects: Record<string, string[]>; updatedAt: number; messageId: string }> = {}
 const inFlight = new Set<string>()
+
+const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models'
+const OPENROUTER_MODEL_TTL_MS = 60 * 60 * 1000
+let openRouterCatalogCache: { fetchedAt: number; models: OpenRouterModel[] } = { fetchedAt: 0, models: [] }
+
+function extractOpenRouterRows(result: any): any[] {
+  const candidates = [result, result?.body, result?.data, result?.json]
+  for (const candidate of candidates) {
+    let value = candidate
+    if (typeof value === 'string') {
+      try { value = JSON.parse(value) } catch { continue }
+    }
+    if (Array.isArray(value)) return value
+    if (value && Array.isArray(value.data)) return value.data
+  }
+  return []
+}
+
+function normalizeOpenRouterModels(rows: any[]): OpenRouterModel[] {
+  const seen = new Set<string>()
+  const models: OpenRouterModel[] = []
+  for (const row of rows || []) {
+    const id = String(row?.id || '').trim()
+    if (!id || seen.has(id)) continue
+    const outputModalities = Array.isArray(row?.architecture?.output_modalities)
+      ? row.architecture.output_modalities.map((x: any) => String(x).toLowerCase())
+      : []
+    // The generic OpenRouter catalog now includes image/audio/embedding models.
+    // Persona Paths can only use models that produce text. Keep older records
+    // that omit modality metadata so a newly-added text model is not hidden.
+    if (outputModalities.length && !outputModalities.includes('text')) continue
+    seen.add(id)
+    const supported = Array.isArray(row?.supported_parameters)
+      ? row.supported_parameters.map((x: any) => String(x).toLowerCase())
+      : []
+    const contextLength = Number(row?.context_length || row?.top_provider?.context_length || 0)
+    models.push({
+      id,
+      name: String(row?.name || id).trim() || id,
+      contextLength: Number.isFinite(contextLength) && contextLength > 0 ? Math.round(contextLength) : 0,
+      reasoning: supported.includes('reasoning') || supported.some((x: string) => x.startsWith('reasoning.')),
+    })
+  }
+  return models.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+}
+
+async function getOpenRouterModels(force = false): Promise<{ models: OpenRouterModel[]; cached: boolean; fetchedAt: number }> {
+  if (!spindle.permissions.has('cors_proxy')) {
+    throw new Error('Grant Persona Paths the CORS Proxy permission to load the searchable OpenRouter model catalog. Manual model IDs still work without it.')
+  }
+  const now = Date.now()
+  if (!force && openRouterCatalogCache.models.length && now - openRouterCatalogCache.fetchedAt < OPENROUTER_MODEL_TTL_MS) {
+    return { ...openRouterCatalogCache, cached: true }
+  }
+  const result = await spindle.cors(OPENROUTER_MODELS_URL, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  })
+  const models = normalizeOpenRouterModels(extractOpenRouterRows(result))
+  if (!models.length) throw new Error('OpenRouter returned no usable text models. Manual model IDs remain available.')
+  openRouterCatalogCache = { fetchedAt: now, models }
+  return { ...openRouterCatalogCache, cached: false }
+}
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number) {
   const n = Number(value)
@@ -1492,6 +1562,7 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
 async function sendState(userId?: string) {
   const generationGranted = spindle.permissions.has('generation')
   const memoriesGranted = spindle.permissions.has('memories')
+  const corsGranted = spindle.permissions.has('cors_proxy')
   let connections: any[] = []
   let connectionError = ''
 
@@ -1540,6 +1611,7 @@ async function sendState(userId?: string) {
     connections,
     generationGranted,
     memoriesGranted,
+    corsGranted,
     connectionError,
     personaError,
     prismInfo,
@@ -1553,6 +1625,23 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
 
     if (payload.type === 'get_state') {
       await sendState(userId)
+      return
+    }
+
+    if (payload.type === 'get_openrouter_models') {
+      try {
+        const catalog = await getOpenRouterModels(!!payload.force)
+        spindle.sendToFrontend({
+          type: 'openrouter_models',
+          models: catalog.models,
+          fetchedAt: catalog.fetchedAt,
+          cached: catalog.cached,
+        }, userId)
+      } catch (err: any) {
+        const message = err?.message || String(err)
+        spindle.log.warn(`Persona Paths OpenRouter catalog unavailable: ${message}`)
+        spindle.sendToFrontend({ type: 'openrouter_models_error', error: message }, userId)
+      }
       return
     }
 
@@ -1755,6 +1844,8 @@ spindle.permissions.onChanged(({ permission }) => {
   // button/get_state request provides the frontend user's scope safely.
   if (permission === 'generation') {
     spindle.log.info('Persona Paths generation permission changed; refresh the panel to reload connections.')
+  } else if (permission === 'cors_proxy') {
+    spindle.log.info('Persona Paths CORS Proxy permission changed; refresh the panel to reload the OpenRouter model catalog.')
   } else if (permission === 'memories') {
     spindle.log.info('Persona Paths Memory Cortex permission changed; refresh the panel to update Cortex status.')
   }
