@@ -1,4 +1,4 @@
-const EXT_VERSION = '0.1.30';
+const EXT_VERSION = '0.1.31';
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
 function createLabeledField(ctx, label, control, hint) {
     const wrap = ctx.dom.createElement('label', { class: 'pp-field' });
@@ -328,14 +328,20 @@ export function setup(ctx) {
     .pp-connection-status.error { color:var(--lumiverse-danger, #d97777); }
     .pp-prism-status { font-size:10.5px; line-height:1.35; color:var(--lumiverse-text-muted); margin-top:-7px; }
     .pp-divider { height:1px; background:var(--lumiverse-border); opacity:.7; }
-    .pp-launcher {
-      width:100%; height:100%; display:flex; align-items:center; justify-content:center; gap:7px; box-sizing:border-box;
-      border:1px solid var(--lumiverse-border); border-radius:999px; padding:0 11px; cursor:pointer;
+    .pp-launcher-group {
+      width:100%; height:100%; display:flex; align-items:stretch; box-sizing:border-box; overflow:hidden;
+      border:1px solid var(--lumiverse-border); border-radius:999px;
       background:color-mix(in srgb, var(--lumiverse-fill) 92%, transparent); color:var(--lumiverse-text);
       box-shadow:0 7px 24px rgba(0,0,0,.24); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    }
+    .pp-launcher {
+      min-width:0; height:100%; display:flex; align-items:center; justify-content:center; gap:7px; box-sizing:border-box;
+      border:0; background:transparent; color:var(--lumiverse-text); padding:0 11px; cursor:pointer;
       font:inherit; font-size:12px; font-weight:750; letter-spacing:.01em;
     }
     .pp-launcher:hover { background:var(--lumiverse-fill-subtle); }
+    .pp-launcher.paths { flex:1 1 auto; }
+    .pp-launcher.writer { flex:0 0 38px; width:38px; padding:0; border-left:1px solid var(--lumiverse-border); font-size:17px; }
     .pp-launcher svg { width:16px; height:16px; color:var(--lumiverse-accent, currentColor); flex:0 0 auto; }
     .pp-native-select-slot { width:100%; min-width:0; }
     .pp-version { font-size:10px; color:var(--lumiverse-text-muted); opacity:.7; margin-top:-8px; }
@@ -493,7 +499,7 @@ export function setup(ctx) {
             writerHistory = [currentDraft];
             writerHistoryIndex = 0;
             const modal = ctx.ui.showModal({
-                title: currentDraft.trim() ? 'Persona Paths · Rewrite my draft' : 'Persona Paths · Write for me',
+                title: currentDraft.trim() ? 'User Writer · Rewrite my draft' : 'User Writer · Write for me',
                 width: 620,
                 maxHeight: Math.min(760, Math.max(420, window.innerHeight - 24)),
             });
@@ -501,8 +507,8 @@ export function setup(ctx) {
             const wrap = ctx.dom.createElement('div', { class: 'pp-writer-modal' });
             const copy = ctx.dom.createElement('p', { class: 'pp-writer-copy' });
             copy.textContent = currentDraft.trim()
-                ? 'Persona Paths will preserve what you decided and smooth it into one in-character user turn.'
-                : 'The composer is empty, so Persona Paths will write a fresh in-character user turn from the current scene.';
+                ? 'User Writer will preserve what you decided and smooth it into one in-character user turn.'
+                : 'The composer is empty, so User Writer will write a fresh in-character user turn from the current scene.';
             const direction = ctx.dom.createElement('textarea', {
                 class: 'pp-writer-direction',
                 placeholder: 'Optional direction: less confrontational; answer her question; keep the action from Path #3; make it more playful…',
@@ -573,7 +579,7 @@ export function setup(ctx) {
                 next.disabled = true;
                 generate.textContent = draft.trim() ? 'Rewriting…' : 'Writing…';
                 status.classList.remove('error');
-                status.textContent = draft.trim() ? 'Polishing your draft with Persona Paths…' : 'Writing an in-character response with Persona Paths…';
+                status.textContent = draft.trim() ? 'Polishing your draft with User Writer…' : 'Writing an in-character response with User Writer…';
                 ctx.sendToBackend({
                     type: 'user_writer',
                     chatId,
@@ -628,6 +634,21 @@ export function setup(ctx) {
             ui.generate.textContent = 'Try again';
             ui.updateHistoryUi();
         }
+    }
+    function triggerUserWriter() {
+        if (writerPending)
+            return;
+        // A Path card is helpful when available, but User Writer must not depend on
+        // successful Path generation. If Paths are disabled, skipped, blocked, or
+        // failed, resolve the latest assistant reply directly from the active chat.
+        if (activePathMessageId) {
+            const data = dataByMessage.get(activePathMessageId);
+            if (data?.chatId) {
+                openWriterModal(data.chatId, activePathMessageId);
+                return;
+            }
+        }
+        ctx.sendToBackend({ type: 'resolve_writer_latest' });
     }
     function clearNonActiveWidgets(keepMessageId) {
         for (const [id, cleanup] of Array.from(cards.entries())) {
@@ -861,13 +882,13 @@ export function setup(ctx) {
   }
 
   if (model.mode === 'loading') {
-    polishBtn.hidden = true; guideBtn.hidden = true; regenBtn.hidden = true;
+    polishBtn.hidden = false; guideBtn.hidden = true; regenBtn.hidden = true;
     const row = document.createElement('div'); row.className = 'loading';
     const dot = document.createElement('span'); dot.className = 'dot';
     const label = document.createElement('span'); label.textContent = 'Reading the scene…';
     row.append(dot, label); host.appendChild(row);
   } else if (model.mode === 'error') {
-    polishBtn.hidden = true; guideBtn.hidden = true; regenBtn.hidden = true;
+    polishBtn.hidden = false; guideBtn.hidden = true; regenBtn.hidden = false;
     const msg = document.createElement('div'); msg.className = 'error'; msg.textContent = 'Couldn’t generate choices. ' + (model.error || 'Unknown error');
     const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'btn'; retry.style.marginTop = '8px'; retry.textContent = 'Retry';
     retry.addEventListener('click', () => post({ type:'retry' }));
@@ -1091,22 +1112,29 @@ export function setup(ctx) {
     let floatLauncher = null;
     try {
         floatLauncher = ctx.ui.createFloatWidget({
-            width: 86,
+            width: 126,
             height: 38,
             initialPosition: {
                 x: 16,
                 y: Math.max(12, window.innerHeight - 142),
             },
             snapToEdge: true,
-            tooltip: `Open Persona Paths v${EXT_VERSION}`,
+            tooltip: `Persona Paths + User Writer v${EXT_VERSION}`,
             chromeless: true,
         });
-        const launcher = ctx.dom.createElement('button', { type: 'button', class: 'pp-launcher' });
+        const launcherGroup = ctx.dom.createElement('div', { class: 'pp-launcher-group' });
+        const launcher = ctx.dom.createElement('button', { type: 'button', class: 'pp-launcher paths' });
         launcher.title = `Open Persona Paths v${EXT_VERSION}`;
         launcher.setAttribute('aria-label', 'Open Persona Paths');
         launcher.innerHTML = `${PATHS_ICON}<span>Paths</span>`;
         launcher.addEventListener('click', () => tab.activate());
-        floatLauncher.root.appendChild(launcher);
+        const writerLauncher = ctx.dom.createElement('button', { type: 'button', class: 'pp-launcher writer' });
+        writerLauncher.title = 'User Writer — write or rewrite the current composer';
+        writerLauncher.setAttribute('aria-label', 'Open User Writer');
+        writerLauncher.textContent = '✦';
+        writerLauncher.addEventListener('click', triggerUserWriter);
+        launcherGroup.append(launcher, writerLauncher);
+        floatLauncher.root.appendChild(launcherGroup);
     }
     catch (err) {
         console.warn('[Persona Paths] Native floating launcher unavailable', err);
@@ -1186,24 +1214,15 @@ export function setup(ctx) {
     try {
         polishAction = ctx.ui.registerInputBarAction({
             id: 'polish-persona-paths-draft',
-            label: 'User Writer with Persona Paths',
+            label: 'User Writer',
             iconSvg: PATHS_ICON,
             enabled: true,
         });
-        unsubPolishAction = polishAction.onClick(() => {
-            if (activePathMessageId) {
-                const data = dataByMessage.get(activePathMessageId);
-                if (data?.chatId) {
-                    openWriterModal(data.chatId, activePathMessageId);
-                    return;
-                }
-            }
-            ctx.sendToBackend({ type: 'resolve_writer_latest' });
-        });
+        unsubPolishAction = polishAction.onClick(triggerUserWriter);
     }
     catch { }
     const connectionSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' });
-    settings.appendChild(createLabeledField(ctx, 'LLM connection', connectionSlot, 'Uses a separate Lumiverse connection profile from your story model if you want.'));
+    settings.appendChild(createLabeledField(ctx, 'Persona Paths connection', connectionSlot, 'Connection used to generate the CYOA Path choices. This can stay completely separate from your story model.'));
     const connectionPicker = ctx.components.mountSelect(connectionSlot, {
         value: '',
         options: [],
@@ -1229,7 +1248,46 @@ export function setup(ctx) {
     settings.appendChild(refreshConnections);
     const modelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'Leave blank to use connection model' });
     modelOverride.addEventListener('input', () => scheduleSave({ modelOverride: modelOverride.value }));
-    settings.appendChild(createLabeledField(ctx, 'Model override', modelOverride, 'Optional exact model ID. Blank follows the selected connection profile.'));
+    settings.appendChild(createLabeledField(ctx, 'Paths model override', modelOverride, 'Optional exact model ID for Path generation. Blank follows the selected Paths connection profile.'));
+    const writerDivider = ctx.dom.createElement('div', { class: 'pp-divider' });
+    settings.appendChild(writerDivider);
+    const writerHeading = ctx.dom.createElement('h3');
+    writerHeading.textContent = 'User Writer';
+    const writerIntro = ctx.dom.createElement('p');
+    writerIntro.textContent = 'Write For Me and Rewrite/Polish are independent from Path generation. They stay available when Paths are disabled, skipped, blocked, or fail.';
+    settings.append(writerHeading, writerIntro);
+    const writerConnectionSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' });
+    settings.appendChild(createLabeledField(ctx, 'User Writer connection', writerConnectionSlot, 'Defaults to Same as Persona Paths, or choose a different connection/provider specifically for prose writing.'));
+    const writerConnectionPicker = ctx.components.mountSelect(writerConnectionSlot, {
+        value: '__same_as_paths__',
+        options: [],
+        placeholder: 'Same as Persona Paths',
+        searchPlaceholder: 'Search connections…',
+        noResultsMessage: 'No matching connections.',
+        emptyMessage: 'No Lumiverse LLM connections are available.',
+        portal: true,
+        maxHeight: 360,
+        minWidth: 300,
+        onChange: (connectionId) => scheduleSave({ writerConnectionId: connectionId === '__same_as_paths__' ? '' : connectionId }, 0),
+    });
+    const writerConnectionStatus = ctx.dom.createElement('div', { class: 'pp-connection-status' });
+    writerConnectionStatus.textContent = 'User Writer currently follows the Persona Paths connection.';
+    settings.appendChild(writerConnectionStatus);
+    const writerModelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'Leave blank to use writer connection model' });
+    writerModelOverride.addEventListener('input', () => scheduleSave({ writerModelOverride: writerModelOverride.value }));
+    settings.appendChild(createLabeledField(ctx, 'Writer model override', writerModelOverride, 'Optional exact model ID used only by Write For Me / Rewrite.'));
+    const writerTuningGrid = ctx.dom.createElement('div', { class: 'pp-grid' });
+    const writerTemperature = ctx.dom.createElement('input', { type: 'number', min: '0', max: '2', step: '0.05' });
+    writerTemperature.addEventListener('change', () => scheduleSave({ writerTemperature: Number(writerTemperature.value) }, 0));
+    const writerMaxTokens = ctx.dom.createElement('input', { type: 'number', min: '500', max: '32000', step: '100' });
+    writerMaxTokens.addEventListener('change', () => scheduleSave({ writerMaxTokens: Number(writerMaxTokens.value) }, 0));
+    writerTuningGrid.append(createLabeledField(ctx, 'Writer temperature', writerTemperature, 'Independent prose-writing temperature.'), createLabeledField(ctx, 'Writer max output tokens', writerMaxTokens, 'Independent writer budget. Always-thinking Kimi models still get the automatic 16k floor.'));
+    settings.appendChild(writerTuningGrid);
+    const writerReasoningToggle = ctx.dom.createElement('input', { type: 'checkbox' });
+    const writerReasoningLabel = ctx.dom.createElement('label', { class: 'pp-check' });
+    writerReasoningLabel.append(writerReasoningToggle, document.createTextNode('Use User Writer connection reasoning / thinking'));
+    writerReasoningToggle.addEventListener('change', () => scheduleSave({ writerUseReasoning: writerReasoningToggle.checked }, 0));
+    settings.appendChild(writerReasoningLabel);
     const grid = ctx.dom.createElement('div', { class: 'pp-grid' });
     const pov = ctx.dom.createElement('select');
     [['auto', 'Auto'], ['first', 'First person'], ['second', 'Second person'], ['third', 'Third person']].forEach(([v, l]) => {
@@ -1393,6 +1451,10 @@ export function setup(ctx) {
         relationshipMemoryToggle.checked = cfg.relationshipMemory !== false;
         reasoningToggle.checked = !!cfg.useReasoning;
         modelOverride.value = cfg.modelOverride || '';
+        writerModelOverride.value = cfg.writerModelOverride || '';
+        writerTemperature.value = String(cfg.writerTemperature ?? 0.75);
+        writerMaxTokens.value = String(cfg.writerMaxTokens ?? 2200);
+        writerReasoningToggle.checked = !!cfg.writerUseReasoning;
         globalInstructions.value = cfg.globalInstructions || '';
         temperature.value = String(cfg.temperature ?? 0.85);
         maxTokens.value = String(cfg.maxTokens ?? 1400);
@@ -1414,6 +1476,31 @@ export function setup(ctx) {
                 sublabel: String(c.model || c.provider || ''),
             })),
         });
+        const writerConnectionId = cfg.writerConnectionId && conns.some((c) => c.id === cfg.writerConnectionId)
+            ? String(cfg.writerConnectionId)
+            : '__same_as_paths__';
+        const selectedPathsConn = conns.find((c) => String(c.id) === String(selectedConnection));
+        writerConnectionPicker.update({
+            value: writerConnectionId,
+            options: [
+                {
+                    value: '__same_as_paths__',
+                    label: 'Same as Persona Paths',
+                    sublabel: selectedPathsConn ? String(selectedPathsConn.model || selectedPathsConn.provider || '') : 'Follow the Paths connection',
+                },
+                ...conns.map((c) => ({
+                    value: String(c.id),
+                    label: String(c.name || 'Unnamed connection'),
+                    sublabel: String(c.model || c.provider || ''),
+                })),
+            ],
+        });
+        const chosenWriterConn = writerConnectionId === '__same_as_paths__'
+            ? selectedPathsConn
+            : conns.find((c) => String(c.id) === writerConnectionId);
+        writerConnectionStatus.textContent = writerConnectionId === '__same_as_paths__'
+            ? `Following Persona Paths${chosenWriterConn ? ` · ${String(chosenWriterConn.name || chosenWriterConn.model || '')}` : ''}.`
+            : `Independent writer connection${chosenWriterConn ? ` · ${String(chosenWriterConn.name || chosenWriterConn.model || '')}` : ''}.`;
         const connectionError = String(state?.connectionError || '');
         if (connectionError) {
             connectionStatus.classList.add('error');
@@ -1727,6 +1814,10 @@ export function setup(ctx) {
         catch { }
         try {
             connectionPicker?.destroy?.();
+        }
+        catch { }
+        try {
+            writerConnectionPicker?.destroy?.();
         }
         catch { }
         try {

@@ -1,5 +1,15 @@
 # Persona Paths
 
+## v0.1.31 — independent User Writer model + always-available writer
+
+- **User Writer no longer depends on a Persona Paths card.** The host-managed floating launcher now has a persistent `✦` button next to `Paths`; it works even when automatic Paths are disabled, skipped, blocked by the provider, or fail. The existing card button and Lumiverse Extras action remain available too.
+- Path loading/error cards keep the `✦` User Writer control visible instead of hiding it with the failed CYOA UI.
+- Adds a dedicated **User Writer connection** selector. Default is **Same as Persona Paths**, but Write For Me / Rewrite can use an entirely different Lumiverse connection/provider.
+- Adds independent **Writer model override, temperature, max output tokens, and reasoning/thinking** settings. Paths keep their existing model/tuning untouched.
+- Write For Me and Rewrite still use Current Moment, persona guidance, recent portrayal, private relationship notes, and read-only Memory Cortex continuity; they never auto-send.
+- Manual User Writer remains usable on OOC exchanges: the targeted OOC assistant reply can be the immediate Current Moment without being used as portrayal evidence or as the Memory Cortex query text.
+- Keeps the v0.1.26 latest-widget-only virtualization/performance architecture.
+
 ## v0.1.30 — User Writer + numbered steering
 
 - The ✦ action is now **User Writer**: with text in the composer it conservatively rewrites/polishes your draft; with an empty composer it writes a fresh in-character user turn from the current scene.
@@ -35,7 +45,7 @@ Optimizes Persona Paths for Lumiverse's current virtualized message list. Older 
 
 v0.1.26 keeps **at most one Path widget active: the latest actionable assistant reply**. Historical choices remain saved privately but are no longer mounted while scrolling. Message remounts do no backend work, identical widget payloads are render-deduplicated, chat restore loads only the latest cached Path, and starting a new story generation retires the previous widget immediately. All v0.1.25 features — Current Moment anchoring, Memory Cortex, Draft Polish, Prism, guided regeneration, combining Paths, etc. — remain intact.
 
-Version 0.1.29
+Version 0.1.31
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -65,7 +75,7 @@ The editable TypeScript sources are also kept at root (`backend.ts`, `frontend.t
 - Choices control only the player's persona; NPC reactions, discoveries, consequences, and world state remain with the story model.
 - Configurable Auto/First/Second/Third person and Auto/Present/Past tense.
 - Configurable Compact/Normal/Detailed choice length and 3–6 choices.
-- Separate Lumiverse LLM connection and optional model override.
+- Separate Persona Paths and User Writer Lumiverse LLM connections, each with optional model overrides; User Writer also has independent temperature/token/reasoning tuning.
 - Private relationship memory.
 - Swipe-aware choice regeneration.
 - Click-to-append composer without auto-send, allowing multiple Paths to be combined in one user turn.
@@ -76,7 +86,7 @@ When the frontend loads successfully, Persona Paths exposes:
 
 - a `Paths` drawer tab,
 - `Open Persona Paths` in the chat input Extras menu,
-- a floating `Paths` launcher.
+- a floating `Paths` launcher with a persistent `✦` User Writer button.
 
 The panel displays its installed extension version.
 

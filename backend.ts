@@ -41,6 +41,11 @@ type Config = {
   maxTokens: number
   connectionId: string
   modelOverride: string
+  writerConnectionId: string
+  writerModelOverride: string
+  writerTemperature: number
+  writerMaxTokens: number
+  writerUseReasoning: boolean
   relationshipMemory: boolean
   longTermStoryMemory: boolean
   storyMemoryChunks: number
@@ -82,6 +87,11 @@ const DEFAULT_CONFIG: Config = {
   maxTokens: 1400,
   connectionId: '',
   modelOverride: '',
+  writerConnectionId: '',
+  writerModelOverride: '',
+  writerTemperature: 0.75,
+  writerMaxTokens: 2200,
+  writerUseReasoning: false,
   relationshipMemory: true,
   longTermStoryMemory: true,
   storyMemoryChunks: 6,
@@ -110,6 +120,9 @@ function normalizeConfig(input: Partial<Config> | null | undefined): Config {
   next.longTermStoryMemory = next.longTermStoryMemory !== false
   next.temperature = clampNumber(next.temperature, 0, 2, DEFAULT_CONFIG.temperature)
   next.maxTokens = Math.round(clampNumber(next.maxTokens, 500, 32000, DEFAULT_CONFIG.maxTokens))
+  next.writerTemperature = clampNumber(next.writerTemperature, 0, 2, DEFAULT_CONFIG.writerTemperature)
+  next.writerMaxTokens = Math.round(clampNumber(next.writerMaxTokens, 500, 32000, DEFAULT_CONFIG.writerMaxTokens))
+  next.writerUseReasoning = !!next.writerUseReasoning
   next.generationDelaySeconds = clampNumber(next.generationDelaySeconds, 0, 15, DEFAULT_CONFIG.generationDelaySeconds)
   next.skipOoc = next.skipOoc !== false
   if (!['auto', 'first', 'second', 'third'].includes(next.pov)) next.pov = 'auto'
@@ -123,6 +136,8 @@ function normalizeConfig(input: Partial<Config> | null | undefined): Config {
   next.globalInstructions = String(next.globalInstructions || '')
   next.connectionId = String(next.connectionId || '')
   next.modelOverride = String(next.modelOverride || '')
+  next.writerConnectionId = String(next.writerConnectionId || '')
+  next.writerModelOverride = String(next.writerModelOverride || '')
   return next
 }
 
@@ -921,6 +936,13 @@ async function resolveConnection(cfg: Config, userId?: string) {
   return { conn, connections }
 }
 
+async function resolveWriterConnection(cfg: Config, userId?: string) {
+  const { conn: pathsConn, connections } = await resolveConnection(cfg, userId)
+  if (!cfg.writerConnectionId) return { conn: pathsConn, connections, followsPaths: true }
+  const writerConn = connections.find((c: any) => c.id === cfg.writerConnectionId)
+  return { conn: writerConn || pathsConn, connections, followsPaths: !writerConn }
+}
+
 function getKimiTraits(provider: string, model: string) {
   const p = String(provider || '').toLowerCase()
   const m = String(model || '').toLowerCase()
@@ -1228,22 +1250,34 @@ async function handleUserWriter(chatId: string, messageId: string, draft: string
   const storyMessages = messages.filter((m: any) =>
     (m.role === 'user' || m.role === 'assistant') && (!config.skipOoc || !oocMessageIds.has(String(m.id || '')))
   )
+  const targetIsOoc = config.skipOoc && oocMessageIds.has(messageId)
   const targetIndex = storyMessages.findIndex((m: any) => String(m?.id || '') === messageId)
   const throughTarget = targetIndex >= 0 ? storyMessages.slice(0, targetIndex + 1) : storyMessages
-  const sceneMessages = throughTarget.slice(-config.contextMessages)
+  // User Writer is a manual tool, so OOC suppression must never make it unusable.
+  // Keep OOC out of portrayal examples / Cortex query context, but allow the
+  // explicitly targeted latest assistant reply to be the immediate Current Moment.
+  const cleanSceneMessages = throughTarget.slice(-config.contextMessages)
+  const sceneMessages = targetIsOoc && !cleanSceneMessages.some((m: any) => String(m?.id || '') === messageId)
+    ? [...cleanSceneMessages.slice(-(Math.max(1, config.contextMessages - 1))), target]
+    : cleanSceneMessages
   const recentUserTurns = throughTarget.filter((m: any) => m.role === 'user').slice(-config.recentUserExamples)
   const firstSceneMessageId = String(sceneMessages[0]?.id || '')
   const recentSceneStartIndex = firstSceneMessageId
     ? messages.findIndex((m: any) => String(m?.id || '') === firstSceneMessageId)
     : -1
   const storyMemory = await retrieveStoryMemoryContext(
-    chatId, userId, messages, oocMessageIds, recentSceneStartIndex, sceneMessages, persona,
+    chatId, userId, messages, oocMessageIds, recentSceneStartIndex, cleanSceneMessages, persona,
   )
 
-  const { conn } = await resolveConnection(config, userId)
-  const model = config.modelOverride.trim() || conn.model
-  const tuning = buildGenerationTuning(conn, model, config, false)
-  if (!tuning.traits.isKimi && typeof tuning.params.temperature === 'number') tuning.params.temperature = Math.min(Number(tuning.params.temperature), 0.6)
+  const { conn } = await resolveWriterConnection(config, userId)
+  const model = config.writerModelOverride.trim() || conn.model
+  const writerConfig = {
+    ...config,
+    temperature: config.writerTemperature,
+    maxTokens: config.writerMaxTokens,
+    useReasoning: config.writerUseReasoning,
+  } as Config
+  const tuning = buildGenerationTuning(conn, model, writerConfig, false)
 
   const request: any = {
     provider: conn.provider,
