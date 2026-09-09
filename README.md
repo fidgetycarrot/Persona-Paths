@@ -1,5 +1,21 @@
 # Persona Paths
 
+## v0.1.34 — visible, editable model IDs
+
+- OpenRouter picker rows and selected values show the exact API model ID as the main label, with the friendly name and capabilities underneath.
+- Paths and User Writer each keep an editable model ID field visible, including after catalog selection and refresh. Blank follows the connection model.
+- Settings refreshes preserve model ID edits while the field has focus; quick changes to different settings are saved together.
+- Includes all v0.1.33 persona-selection improvements.
+
+## v0.1.33 — per-chat persona selection
+
+- Select **Persona for this chat**, defaulting to **Use Lumiverse active persona**. Available personas load from Lumiverse, including when no persona is active.
+- **Writing as** shows the resolved persona. Its private guidance is editable before any Paths card exists, and both Paths and User Writer use its full persona card and guidance.
+- Selection persists per user/chat; guidance remains per persona. Switching clears obsolete Paths and writer draft history. Missing selected personas show an error instead of silently writing as someone else.
+- Existing OpenRouter search, separate writer model, mobile steering, manual OOC override, Cortex/current-moment context, and latest-widget-only rendering remain in place. No new permissions.
+- Install by replacing the repository files with this package, then updating the extension in Lumiverse. Existing configuration is migrated automatically.
+- Validation: `npm ci`, `npm run typecheck`, `bun run build`, `npm test`, and `node --check backend.js` / `node --check frontend.js`.
+
 ## v0.1.32 — searchable OpenRouter model pickers
 
 - Replaces the copy/paste-only model override workflow with **searchable model pickers** for OpenRouter connections in both Persona Paths and User Writer.

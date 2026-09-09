@@ -1,6 +1,6 @@
 type Ctx = any
 
-const EXT_VERSION = '0.1.32'
+const EXT_VERSION = '0.1.34'
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`
 
 type Choice = { intent: string; title: string; text: string; intensity?: 1 | 2 | 3; advances_scene?: boolean }
@@ -430,7 +430,7 @@ export function setup(ctx: Ctx) {
 
       const save = ctx.dom.createElement('input', { type: 'checkbox' }) as HTMLInputElement
       const saveLabel = ctx.dom.createElement('label', { class: 'pp-guidance-modal-save' }) as HTMLLabelElement
-      saveLabel.append(save, document.createTextNode('Save this as active persona guidance'))
+      saveLabel.append(save, document.createTextNode('Save this as selected persona guidance'))
 
       const error = ctx.dom.createElement('div', { class: 'pp-guidance-modal-error', role: 'status' }) as HTMLElement
       const actions = ctx.dom.createElement('div', { class: 'pp-guidance-modal-actions' }) as HTMLElement
@@ -795,12 +795,12 @@ export function setup(ctx: Ctx) {
     <div class="guide" id="guide" hidden>
       <div class="guide-title">Regenerate with guidance</div>
       <textarea id="guidance" placeholder="What direction were you thinking? e.g. Stop arguing and give me options where Rook physically leaves camp."></textarea>
-      <label class="save"><input type="checkbox" id="saveGuidance"> Save this as active persona guidance</label>
+      <label class="save"><input type="checkbox" id="saveGuidance"> Save this as selected persona guidance</label>
       <div class="actions">
         <button type="button" class="btn" id="cancelGuide">Cancel</button>
         <button type="button" class="btn primary" id="generateGuide">Generate new paths</button>
       </div>
-      <div class="hint">One-shot by default. Saving appends this correction to the active persona’s private Persona Paths guidance.</div>
+      <div class="hint">One-shot by default. Saving appends this correction to the selected persona’s private Persona Paths guidance.</div>
     </div>
   </section>
 <script>
@@ -1024,9 +1024,15 @@ export function setup(ctx: Ctx) {
     })
   }
 
+  let pendingConfigPatch: any = {}
   function scheduleSave(patch: any, delay = 180) {
+    Object.assign(pendingConfigPatch, patch)
     if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => ctx.sendToBackend({ type: 'save_config', patch }), delay)
+    saveTimer = setTimeout(() => {
+      const combinedPatch = pendingConfigPatch
+      pendingConfigPatch = {}
+      ctx.sendToBackend({ type: 'save_config', patch: combinedPatch })
+    }, delay)
   }
 
   function delayMs() {
@@ -1248,11 +1254,11 @@ export function setup(ctx: Ctx) {
       sublabel: String(conn?.model || 'Follow the selected connection profile'),
     }
     const modelOptions = openRouterModels.map(model => {
-      const bits = [model.id]
+      const bits = [model.name || model.id]
       const context = formatContextLength(model.contextLength)
       if (context) bits.push(context)
       if (model.reasoning) bits.push('reasoning')
-      return { value: model.id, label: model.name || model.id, sublabel: bits.join(' · ') }
+      return { value: model.id, label: model.id, sublabel: bits.join(' · ') }
     })
     if (override) {
       const index = modelOptions.findIndex(opt => opt.value === override)
@@ -1344,7 +1350,7 @@ export function setup(ctx: Ctx) {
 
   const modelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'e.g. google/gemini-3.1-pro-preview' }) as HTMLInputElement
   modelOverride.addEventListener('input', () => scheduleSave({ modelOverride: modelOverride.value }))
-  const modelOverrideWrap = createLabeledField(ctx, 'Manual Paths model ID', modelOverride, 'Fallback for aliases, custom IDs, or models not present in OpenRouter’s public catalog.')
+  const modelOverrideWrap = createLabeledField(ctx, 'Paths model ID — editable', modelOverride, 'Exact model ID sent to the provider. Edit or paste an ID here at any time; leave blank to use the connection model.')
   settings.appendChild(modelOverrideWrap)
 
   const writerDivider = ctx.dom.createElement('div', { class: 'pp-divider' }) as HTMLElement
@@ -1398,7 +1404,7 @@ export function setup(ctx: Ctx) {
 
   const writerModelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'e.g. anthropic/claude-sonnet-5' }) as HTMLInputElement
   writerModelOverride.addEventListener('input', () => scheduleSave({ writerModelOverride: writerModelOverride.value }))
-  const writerModelOverrideWrap = createLabeledField(ctx, 'Manual Writer model ID', writerModelOverride, 'Fallback for aliases, custom IDs, or models not present in OpenRouter’s public catalog.')
+  const writerModelOverrideWrap = createLabeledField(ctx, 'Writer model ID — editable', writerModelOverride, 'Exact model ID sent to the provider. Edit or paste an ID here at any time; leave blank to use the connection model.')
   settings.appendChild(writerModelOverrideWrap)
 
   function updateOneModelPicker(picker: any, manualWrap: HTMLElement, status: HTMLElement, conn: any, override: string, writer = false) {
@@ -1412,7 +1418,7 @@ export function setup(ctx: Ctx) {
           { value: MANUAL_MODEL, label: 'Manual model ID…', sublabel: 'Searchable catalogs are currently available for OpenRouter connections' },
         ],
       })
-      manualWrap.hidden = !exactOverride
+      manualWrap.hidden = false
       status.classList.remove('error')
       status.textContent = conn
         ? `${String(conn.provider || 'This provider')} does not expose a searchable text-model catalog to Persona Paths; manual override remains available.`
@@ -1425,7 +1431,7 @@ export function setup(ctx: Ctx) {
       value: !exactOverride ? CONNECTION_MODEL : (hasCatalogMatch ? exactOverride : MANUAL_MODEL),
       options: catalogOptions(conn, exactOverride),
     })
-    manualWrap.hidden = !exactOverride || hasCatalogMatch
+    manualWrap.hidden = false
 
     if (openRouterCatalogPending) {
       status.classList.remove('error')
@@ -1600,17 +1606,34 @@ export function setup(ctx: Ctx) {
   settings.appendChild(divider)
 
   const personaBadge = ctx.dom.createElement('div', { class: 'pp-persona-badge' }) as HTMLElement
-  personaBadge.textContent = 'Active persona: loading…'
+  personaBadge.textContent = 'Writing as: loading…'
   settings.appendChild(personaBadge)
 
+  const personaSelector = ctx.dom.createElement('select', { 'aria-label': 'Persona for this chat' }) as HTMLSelectElement
+  personaSelector.addEventListener('change', () => {
+    if (writerPending) { personaSelector.value = currentState?.selectedPersonaId || ''; return }
+    flushPersonaGuidance()
+    personaInstructions.disabled = true
+    ctx.sendToBackend({ type: 'set_chat_persona', chatId: currentState?.activeChatId, personaId: personaSelector.value })
+  })
+  settings.appendChild(createLabeledField(ctx, 'Persona for this chat', personaSelector, 'Used by both Persona Paths and User Writer. Guidance is saved separately for each persona.'))
+  let personaSaveTimer: any = null
+  let pendingPersonaGuidance: { personaId: string; text: string } | null = null
+  function flushPersonaGuidance() {
+    if (personaSaveTimer) clearTimeout(personaSaveTimer)
+    personaSaveTimer = null
+    if (pendingPersonaGuidance) ctx.sendToBackend({ type: 'set_persona_override', ...pendingPersonaGuidance })
+    pendingPersonaGuidance = null
+  }
   const personaInstructions = ctx.dom.createElement('textarea', { placeholder: 'Optional: how this persona behaves, especially exceptions or relationship patterns…' }) as HTMLTextAreaElement
   personaInstructions.addEventListener('input', () => {
     const personaId = currentState?.activePersona?.id
     if (!personaId) return
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => ctx.sendToBackend({ type: 'set_persona_override', personaId, text: personaInstructions.value }), 220)
+    if (personaSaveTimer) clearTimeout(personaSaveTimer)
+    pendingPersonaGuidance = { personaId, text: personaInstructions.value }
+    personaSaveTimer = setTimeout(flushPersonaGuidance, 220)
   })
-  settings.appendChild(createLabeledField(ctx, 'Active persona guidance', personaInstructions, 'Stored privately by Persona Paths. Useful for exceptions like “soft with Elena, reckless with everyone else.”'))
+  settings.appendChild(createLabeledField(ctx, 'Persona guidance', personaInstructions, 'Stored privately by Persona Paths. Useful for exceptions like “soft with Elena, reckless with everyone else.”'))
 
   const globalInstructions = ctx.dom.createElement('textarea', { placeholder: 'Optional global rules for all personas…' }) as HTMLTextAreaElement
   globalInstructions.addEventListener('input', () => scheduleSave({ globalInstructions: globalInstructions.value }))
@@ -1657,8 +1680,8 @@ export function setup(ctx: Ctx) {
       : 'Memory Cortex permission not granted yet; Persona Paths will use chat-memory/recent-scene fallback until it is granted.'
     relationshipMemoryToggle.checked = cfg.relationshipMemory !== false
     reasoningToggle.checked = !!cfg.useReasoning
-    modelOverride.value = cfg.modelOverride || ''
-    writerModelOverride.value = cfg.writerModelOverride || ''
+    if (document.activeElement !== modelOverride) modelOverride.value = cfg.modelOverride || ''
+    if (document.activeElement !== writerModelOverride) writerModelOverride.value = cfg.writerModelOverride || ''
     writerTemperature.value = String(cfg.writerTemperature ?? 0.75)
     writerMaxTokens.value = String(cfg.writerMaxTokens ?? 2200)
     writerReasoningToggle.checked = !!cfg.writerUseReasoning
@@ -1721,12 +1744,20 @@ export function setup(ctx: Ctx) {
       connectionStatus.textContent = `${conns.length} Lumiverse LLM connection${conns.length === 1 ? '' : 's'} available.`
     }
 
-    const personaError = String(state?.personaError || '')
-    personaBadge.textContent = personaError
-      ? `Active persona unavailable: ${personaError}`
-      : (persona ? `Active persona: ${persona.name}${persona.title ? ` — ${persona.title}` : ''}` : 'Active persona: none')
-    personaInstructions.disabled = !persona
-    personaInstructions.value = persona?.id ? (cfg.personaOverrides?.[persona.id] || '') : ''
+    const personaError = String(state?.personaError || state?.personaListError || '')
+    personaBadge.textContent = `Writing as: ${persona?.name || 'none'}${personaError ? ` — ${personaError}` : ''}`
+    personaSelector.replaceChildren()
+    personaSelector.add(new Option('Use Lumiverse active persona', ''))
+    for (const item of state?.personas || []) personaSelector.add(new Option(item.name || 'Unnamed persona', item.id))
+    if (state?.selectedPersonaId && !Array.from(personaSelector.options).some(option => option.value === state.selectedPersonaId)) {
+      personaSelector.add(new Option('Selected persona (unavailable)', state.selectedPersonaId))
+    }
+    personaSelector.value = state?.selectedPersonaId || ''
+    personaSelector.disabled = !state?.activeChatId
+    personaInstructions.disabled = !persona?.id
+    if (document.activeElement !== personaInstructions || pendingPersonaGuidance?.personaId !== persona?.id) {
+      personaInstructions.value = persona?.id ? (cfg.personaOverrides?.[persona.id] || '') : ''
+    }
   }
 
   const unsubBackend = ctx.onBackendMessage((payload: any) => {
@@ -1820,6 +1851,18 @@ export function setup(ctx: Ctx) {
         manualStatus.textContent = String(payload.error || 'Manual Persona Paths generation failed.')
       }
     }
+    else if (payload.type === 'persona_selection_changed') {
+      selectedPathIntents = []
+      writerHistory = []
+      writerHistoryIndex = -1
+      if (writerModal) { try { writerModal.dismiss() } catch {}; writerModal = null }
+      clearNonActiveWidgets()
+      for (const id of Array.from(cards.keys())) removeCard(id)
+      cards.clear()
+      widgetSignatures.clear()
+      dataByMessage.clear()
+      activePathMessageId = null
+    }
     else if (payload.type === 'persona_guidance_saved') {
       const personaId = String(payload.personaId || '')
       const text = String(payload.text || '')
@@ -1911,6 +1954,9 @@ export function setup(ctx: Ctx) {
 
   try {
     unsubChatSwitch = ctx.events.on('CHAT_SWITCHED', () => {
+      flushPersonaGuidance()
+      personaSelector.disabled = true
+      personaInstructions.disabled = true
       if (guidanceModal) {
         try { guidanceModal.dismiss() } catch {}
         guidanceModal = null
@@ -1945,6 +1991,7 @@ export function setup(ctx: Ctx) {
   if (initialLatestId) ctx.sendToBackend({ type: 'load_choices', messageId: initialLatestId })
 
   return () => {
+    flushPersonaGuidance()
     if (saveTimer) clearTimeout(saveTimer)
     if (guidanceModal) {
       try { guidanceModal.dismiss() } catch {}

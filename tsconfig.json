@@ -8,5 +8,8 @@
     "declaration": false,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": [
+    "backend.ts",
+    "frontend.ts"
+  ]
 }

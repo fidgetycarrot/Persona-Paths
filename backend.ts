@@ -58,6 +58,7 @@ type Config = {
   storyMemoryChunks: number
   useReasoning: boolean
   globalInstructions: string
+  chatPersonas: Record<string, string>
   personaOverrides: Record<string, string>
 }
 
@@ -65,6 +66,7 @@ type CachedPath = {
   chatId: string
   messageId: string
   contentHash: string
+  personaId?: string
   style: { pov: string; tense: string }
   sceneState?: { location: string; moment: string }
   choices: Choice[]
@@ -104,6 +106,7 @@ const DEFAULT_CONFIG: Config = {
   storyMemoryChunks: 6,
   useReasoning: false,
   globalInstructions: '',
+  chatPersonas: {},
   personaOverrides: {},
 }
 
@@ -203,6 +206,7 @@ function normalizeConfig(input: Partial<Config> | null | undefined): Config {
   if (!next.prismColorOverrides || typeof next.prismColorOverrides !== 'object') next.prismColorOverrides = {}
   next.prismColorOverrides = Object.fromEntries(Object.entries(next.prismColorOverrides).map(([key, value]) => [key, normalizeHex(value)]).filter(([, value]) => !!value))
   if (!next.personaOverrides || typeof next.personaOverrides !== 'object') next.personaOverrides = {}
+  next.chatPersonas = Object.fromEntries(Object.entries(next.chatPersonas || {}).filter(([key, value]) => key && typeof value === 'string' && value))
   next.globalInstructions = String(next.globalInstructions || '')
   next.connectionId = String(next.connectionId || '')
   next.modelOverride = String(next.modelOverride || '')
@@ -1309,7 +1313,7 @@ async function handleUserWriter(chatId: string, messageId: string, draft: string
   if (!target || target.role !== 'assistant') throw new Error('The assistant reply associated with this Persona Paths card is no longer available.')
 
   const oocMessageIds = config.skipOoc ? collectOocMessageIds(messages) : new Set<string>()
-  const persona = await spindle.personas.getActive(userId)
+  const persona = await resolvePersona(chatId, userId)
   const personaId = persona?.id || 'no_persona'
   const memoryKey = `${chatId}::${personaId}`
   const storedMemory = relationshipMemory[memoryKey]
@@ -1393,12 +1397,14 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
     const target = messages.find((m: any) => m.id === messageId)
     if (!target || target.role !== 'assistant') return
 
+    const persona = await resolvePersona(chatId, userId)
+    const personaId = persona?.id || 'no_persona'
     const oocMessageIds = config.skipOoc ? collectOocMessageIds(messages) : new Set<string>()
     const targetIsOoc = config.skipOoc && oocMessageIds.has(messageId)
     if (targetIsOoc && !allowOocOverride) {
       const existingForced = cache[messageId]
       const currentHash = hashText(String(target.content || ''))
-      if (existingForced?.oocForced && existingForced.contentHash === currentHash) {
+      if (existingForced?.oocForced && existingForced.personaId === personaId && existingForced.contentHash === currentHash) {
         // Restoring a choice set the human explicitly forced is not the same as
         // automatically generating on OOC. Keep that manual decision durable.
         spindle.sendToFrontend({ type: 'choices_ready', data: existingForced }, userId)
@@ -1418,15 +1424,13 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
     const rejectedChoices = force && String(regenerationGuidance || '').trim() && existing?.choices
       ? existing.choices.map(choice => ({ ...choice }))
       : []
-    if (!force && existing && existing.contentHash === contentHash) {
+    if (!force && existing && existing.personaId === personaId && existing.contentHash === contentHash) {
       spindle.sendToFrontend({ type: 'choices_ready', data: existing }, userId)
       return
     }
 
     spindle.sendToFrontend({ type: 'choices_loading', chatId, messageId }, userId)
 
-    const persona = await spindle.personas.getActive(userId)
-    const personaId = persona?.id || 'no_persona'
     const cleanGuidance = String(regenerationGuidance || '').trim()
     if (saveAsPersonaGuidance && cleanGuidance) {
       if (!persona?.id) throw new Error('An active persona is required to save regeneration guidance.')
@@ -1519,6 +1523,7 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
       chatId,
       messageId,
       contentHash,
+      personaId,
       style: result.style as any,
       sceneState: {
         location: String(result.scene_state?.location || '').trim(),
@@ -1559,6 +1564,30 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
   }
 }
 
+function personaSelectionKey(chatId: string, userId?: string) {
+  return JSON.stringify([userId || '', chatId])
+}
+
+async function resolvePersona(chatId: string, userId?: string) {
+  const id = config.chatPersonas[personaSelectionKey(chatId, userId)]
+  if (!id) return spindle.personas.getActive(userId)
+  const persona = await spindle.personas.get(id, userId)
+  if (!persona) throw new Error('The selected persona is unavailable. Choose another persona or Use Lumiverse active persona.')
+  return persona
+}
+
+async function listPersonas(userId?: string) {
+  const personas: any[] = []
+  for (let offset = 0; ; ) {
+    const page = await spindle.personas.list({ userId, limit: 100, offset })
+    const data = page?.data || []
+    personas.push(...data)
+    offset += data.length
+    if (!data.length || offset >= page.total) break
+  }
+  return personas.map(({ id, name, title }) => ({ id, name, title }))
+}
+
 async function sendState(userId?: string) {
   const generationGranted = spindle.permissions.has('generation')
   const memoriesGranted = spindle.permissions.has('memories')
@@ -1582,9 +1611,14 @@ async function sendState(userId?: string) {
   }
 
   let persona: any = null
+  let personas: any[] = []
+  let activeChatId = ''
+  let personaListError = ''
+  try { personas = await listPersonas(userId) } catch (err: any) { personaListError = err?.message || String(err) }
   let personaError = ''
   try {
-    persona = await spindle.personas.getActive(userId)
+    activeChatId = String((await spindle.chats.getActive(userId))?.id || '')
+    persona = await resolvePersona(activeChatId, userId)
   } catch (err: any) {
     personaError = err?.message || String(err)
     spindle.log.error(`Persona Paths active persona lookup failed: ${personaError}`)
@@ -1614,6 +1648,10 @@ async function sendState(userId?: string) {
     corsGranted,
     connectionError,
     personaError,
+    personaListError,
+    personas,
+    activeChatId,
+    selectedPersonaId: config.chatPersonas[personaSelectionKey(activeChatId, userId)] || '',
     prismInfo,
     activePersona: persona ? { id: persona.id, name: persona.name, title: persona.title || '' } : null,
   }, userId)
@@ -1648,6 +1686,26 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
     if (payload.type === 'save_config') {
       config = normalizeConfig({ ...config, ...(payload.patch || {}) })
       await saveConfig()
+      await sendState(userId)
+      return
+    }
+
+    if (payload.type === 'set_chat_persona') {
+      const chatId = String(payload.chatId || '')
+      const activeChat = await spindle.chats.getActive(userId)
+      if (!chatId || activeChat?.id !== chatId) throw new Error('The chat changed. Refresh the persona selection.')
+      const personaId = String(payload.personaId || '')
+      if (personaId && !(await spindle.personas.get(personaId, userId))) throw new Error('That persona is unavailable.')
+      if (Array.from(inFlight).some(key => key.startsWith(`${chatId}:`))) throw new Error('Wait for generation to finish before changing persona.')
+      const key = personaSelectionKey(chatId, userId)
+      if (personaId) config.chatPersonas[key] = personaId
+      else delete config.chatPersonas[key]
+      for (const [id, entry] of Object.entries(cache)) {
+        if (entry.chatId === chatId) delete cache[id]
+      }
+      await saveConfig()
+      await saveCache()
+      spindle.sendToFrontend({ type: 'persona_selection_changed', chatId }, userId)
       await sendState(userId)
       return
     }
@@ -1687,6 +1745,7 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
 
       let cacheChanged = false
       for (const [chatId, messageIds] of grouped) {
+        const personaId = (await resolvePersona(chatId, userId))?.id || 'no_persona'
         let blocked = new Set<string>()
         if (config.skipOoc) {
           try {
@@ -1701,7 +1760,7 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
             delete cache[id]
             cacheChanged = true
             spindle.sendToFrontend({ type: 'choices_skipped', chatId, messageId: id, reason: 'ooc' }, userId)
-          } else if (cache[id]) {
+          } else if (cache[id]?.personaId === personaId) {
             spindle.sendToFrontend({ type: 'choices_ready', data: cache[id] }, userId)
           }
         }
@@ -1830,6 +1889,7 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
       spindle.sendToFrontend({ type: 'manual_error', error }, userId)
     } else {
       spindle.sendToFrontend({ type: 'request_error', error }, userId)
+      if (payload?.type === 'set_chat_persona') await sendState(userId)
     }
   }
 })
