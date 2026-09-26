@@ -1,5 +1,12 @@
 # Persona Paths
 
+## v0.1.35 — on-demand floating launcher
+
+- Tap **Paths** to generate choices immediately for the latest assistant reply, without opening settings. This uses the same manual path as the panel and Extras action, including OOC override, Current Moment anchoring, selected persona and guidance, Cortex/relationship context, and model settings. New installs start in manual mode; existing automatic-generation preferences stay as saved.
+- The launcher shows generating, ready, and failed states and prevents duplicate manual requests. The separate **✦** button still opens User Writer; **⚙** opens the full panel.
+- Dragged launcher placement is saved in this browser. It restores by screen edge and relative height, so viewport changes keep it reachable. Lumiverse's right-click **Reset Position** remains available and clears the saved placement when used.
+- Install by replacing the repository files with this package, then updating the extension in Lumiverse. Existing settings and saved Paths are retained.
+
 ## v0.1.34 — visible, editable model IDs
 
 - OpenRouter picker rows and selected values show the exact API model ID as the main label, with the friendly name and capabilities underneath.
@@ -72,7 +79,7 @@ Optimizes Persona Paths for Lumiverse's current virtualized message list. Older 
 
 v0.1.26 keeps **at most one Path widget active: the latest actionable assistant reply**. Historical choices remain saved privately but are no longer mounted while scrolling. Message remounts do no backend work, identical widget payloads are render-deduplicated, chat restore loads only the latest cached Path, and starting a new story generation retires the previous widget immediately. All v0.1.25 features — Current Moment anchoring, Memory Cortex, Draft Polish, Prism, guided regeneration, combining Paths, etc. — remain intact.
 
-Version 0.1.32
+Version 0.1.35
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 
@@ -90,7 +97,7 @@ The editable TypeScript sources are also kept at root (`backend.ts`, `frontend.t
 
 ### Recent UI fixes
 - Connection selection uses Lumiverse's native searchable select with portal rendering, so the menu escapes the drawer instead of being clipped into a tiny popup.
-- The floating Paths launcher uses Lumiverse's native draggable float widget. It starts on the left so it stays out of the right-side drawer, can be dragged anywhere, snaps to an edge, and Lumiverse provides hide/reset-position controls.
+- The floating Paths launcher uses Lumiverse's native draggable float widget. It starts on the left, remembers where it was dragged, snaps to an edge, and Lumiverse provides hide/reset-position controls.
 
 ## Features
 
@@ -113,7 +120,7 @@ When the frontend loads successfully, Persona Paths exposes:
 
 - a `Paths` drawer tab,
 - `Open Persona Paths` in the chat input Extras menu,
-- a floating `Paths` launcher with a persistent `✦` User Writer button.
+- a floating `Paths` generation button with a persistent `✦` User Writer button and `⚙` settings button.
 
 The panel displays its installed extension version.
 
@@ -170,7 +177,7 @@ CYOA generation is now triggered by the browser-side `GENERATION_ENDED` event an
 
 ## v0.1.10 — manual generation
 
-Persona Paths now has a first-class **Generate Paths for latest reply** action in the drawer and in Lumiverse's chat-input Extras menu. Manual runs resolve the user's currently active chat, find its latest non-empty assistant reply, and force a fresh Persona Paths generation even if automatic generation is disabled or the browser/app was refreshed and the old Retry card disappeared.
+The floating **Paths** button is the primary **Generate Paths for latest reply** action. The same action remains in the drawer and Lumiverse's chat-input Extras menu. Manual runs resolve the user's currently active chat, find its latest non-empty assistant reply, and force a fresh Persona Paths generation even if automatic generation is disabled or the browser/app was refreshed and the old Retry card disappeared.
 
 Manual generation requires Lumiverse's `chats` permission in addition to the existing `chat_mutation` permission: `chats` is used only to resolve the currently active chat; `chat_mutation` reads its messages. Choices remain extension-private and are never injected into the story prompt.
 
@@ -213,4 +220,3 @@ Manual generation requires Lumiverse's `chats` permission in addition to the exi
 - Optional **Save this as active persona guidance** appends the correction to that persona's private Persona Paths guidance.
 - Saved guidance is per persona and immediately updates the existing Active persona guidance field.
 - Useful for persistent corrections such as `Never call Sovi “Price”; use Sovi's established name.` while leaving situational steering unsaved.
-

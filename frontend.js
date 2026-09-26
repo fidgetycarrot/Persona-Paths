@@ -1,6 +1,38 @@
 // frontend.ts
-var EXT_VERSION = "0.1.34";
+var EXT_VERSION = "0.1.35";
 var PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`;
+var LAUNCHER_POSITION_KEY = "persona_paths_launcher_position_v1";
+var LAUNCHER_WIDTH = 164;
+var LAUNCHER_HEIGHT = 38;
+function readLauncherPosition() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(LAUNCHER_POSITION_KEY) || "null");
+    if ((value?.edge === "left" || value?.edge === "right") && Number.isFinite(value.yRatio)) {
+      return { edge: value.edge, yRatio: Math.max(0, Math.min(1, value.yRatio)) };
+    }
+  } catch {}
+  return null;
+}
+function launcherCoordinates(saved) {
+  const maxX = Math.max(0, window.innerWidth - LAUNCHER_WIDTH);
+  const maxY = Math.max(0, window.innerHeight - LAUNCHER_HEIGHT);
+  return {
+    x: saved.edge === "right" ? Math.max(0, maxX - 16) : Math.min(16, maxX),
+    y: Math.round(saved.yRatio * maxY)
+  };
+}
+function rememberLauncherPosition(pos) {
+  if (!Number.isFinite(pos?.x) || !Number.isFinite(pos?.y))
+    return;
+  const maxY = Math.max(0, window.innerHeight - LAUNCHER_HEIGHT);
+  const saved = {
+    edge: pos.x + LAUNCHER_WIDTH / 2 > window.innerWidth / 2 ? "right" : "left",
+    yRatio: maxY ? Math.max(0, Math.min(1, pos.y / maxY)) : 0
+  };
+  try {
+    window.localStorage.setItem(LAUNCHER_POSITION_KEY, JSON.stringify(saved));
+  } catch {}
+}
 function createLabeledField(ctx, label, control, hint) {
   const wrap = ctx.dom.createElement("label", { class: "pp-field" });
   const title = ctx.dom.createElement("span", { class: "pp-label" });
@@ -275,8 +307,13 @@ function setup(ctx) {
       font:inherit; font-size:12px; font-weight:750; letter-spacing:.01em;
     }
     .pp-launcher:hover { background:var(--lumiverse-fill-subtle); }
+    .pp-launcher:disabled { cursor:default; opacity:.8; }
     .pp-launcher.paths { flex:1 1 auto; }
+    .pp-launcher.paths[data-status="working"] { color:var(--lumiverse-accent, currentColor); }
+    .pp-launcher.paths[data-status="success"] { color:var(--lumiverse-success, #59b98b); }
+    .pp-launcher.paths[data-status="error"] { color:var(--lumiverse-danger, #d97777); }
     .pp-launcher.writer { flex:0 0 38px; width:38px; padding:0; border-left:1px solid var(--lumiverse-border); font-size:17px; }
+    .pp-launcher.settings { flex:0 0 30px; width:30px; padding:0; border-left:1px solid var(--lumiverse-border); font-size:16px; }
     .pp-launcher svg { width:16px; height:16px; color:var(--lumiverse-accent, currentColor); flex:0 0 auto; }
     .pp-native-select-slot { width:100%; min-width:0; }
     .pp-model-tools { display:flex; align-items:center; gap:8px; margin-top:-7px; flex-wrap:wrap; }
@@ -1021,30 +1058,93 @@ function setup(ctx) {
   });
   document.querySelectorAll("[data-persona-paths-launcher]").forEach((el) => el.remove());
   let floatLauncher = null;
+  let launcherButton = null;
+  let launcherStatusTimer = null;
+  let resetWatchTimer = null;
+  let resetWatchStopTimer = null;
+  let unsubLauncherDrag = () => {};
+  const defaultLauncherPosition = { x: 16, y: Math.max(12, window.innerHeight - 142) };
+  function setLauncherStatus(status, detail = "") {
+    if (launcherStatusTimer)
+      clearTimeout(launcherStatusTimer);
+    launcherStatusTimer = null;
+    if (!launcherButton)
+      return;
+    const label = launcherButton.querySelector("span");
+    if (label)
+      label.textContent = status === "working" ? "Paths…" : status === "success" ? "Ready ✓" : status === "error" ? "Failed !" : "Paths";
+    launcherButton.dataset.status = status;
+    launcherButton.disabled = status === "working";
+    launcherButton.title = status === "error" ? `Paths failed: ${detail || "Unknown error"}. Click to retry.` : status === "working" ? "Generating Paths for the latest assistant reply" : status === "success" ? "Fresh Paths are ready under the latest reply" : `Generate Paths for latest reply · v${EXT_VERSION}`;
+    launcherButton.setAttribute("aria-label", launcherButton.title);
+    if (status === "success")
+      launcherStatusTimer = setTimeout(() => setLauncherStatus("idle"), 3500);
+  }
+  function stopResetWatch() {
+    if (resetWatchTimer)
+      clearInterval(resetWatchTimer);
+    if (resetWatchStopTimer)
+      clearTimeout(resetWatchStopTimer);
+    resetWatchTimer = null;
+    resetWatchStopTimer = null;
+  }
+  function watchNativeReset() {
+    if (!floatLauncher)
+      return;
+    stopResetWatch();
+    const previous = floatLauncher.getPosition();
+    resetWatchTimer = setInterval(() => {
+      const pos = floatLauncher?.getPosition?.();
+      if (!pos || Math.abs(pos.x - previous.x) < 2 && Math.abs(pos.y - previous.y) < 2)
+        return;
+      const resetY = Math.min(defaultLauncherPosition.y, Math.max(0, window.innerHeight - LAUNCHER_HEIGHT));
+      if (Math.abs(pos.x - defaultLauncherPosition.x) < 4 && Math.abs(pos.y - resetY) < 4) {
+        try {
+          window.localStorage.removeItem(LAUNCHER_POSITION_KEY);
+        } catch {}
+      } else
+        rememberLauncherPosition(pos);
+      stopResetWatch();
+    }, 200);
+    resetWatchStopTimer = setTimeout(stopResetWatch, 12000);
+  }
+  function repositionLauncher() {
+    const saved = readLauncherPosition();
+    if (saved && floatLauncher) {
+      const pos = launcherCoordinates(saved);
+      floatLauncher.moveTo(pos.x, pos.y);
+    }
+  }
   try {
     floatLauncher = ctx.ui.createFloatWidget({
-      width: 126,
-      height: 38,
-      initialPosition: {
-        x: 16,
-        y: Math.max(12, window.innerHeight - 142)
-      },
+      width: LAUNCHER_WIDTH,
+      height: LAUNCHER_HEIGHT,
+      initialPosition: defaultLauncherPosition,
       snapToEdge: true,
       tooltip: `Persona Paths + User Writer v${EXT_VERSION}`,
       chromeless: true
     });
+    repositionLauncher();
+    unsubLauncherDrag = floatLauncher.onDragEnd((pos) => rememberLauncherPosition(pos));
+    floatLauncher.root.addEventListener("contextmenu", watchNativeReset, true);
+    window.addEventListener("resize", repositionLauncher);
     const launcherGroup = ctx.dom.createElement("div", { class: "pp-launcher-group" });
     const launcher = ctx.dom.createElement("button", { type: "button", class: "pp-launcher paths" });
-    launcher.title = `Open Persona Paths v${EXT_VERSION}`;
-    launcher.setAttribute("aria-label", "Open Persona Paths");
+    launcherButton = launcher;
     launcher.innerHTML = `${PATHS_ICON}<span>Paths</span>`;
-    launcher.addEventListener("click", () => tab.activate());
+    launcher.addEventListener("click", triggerManualGeneration);
+    setLauncherStatus("idle");
     const writerLauncher = ctx.dom.createElement("button", { type: "button", class: "pp-launcher writer" });
     writerLauncher.title = "User Writer — write or rewrite the current composer";
     writerLauncher.setAttribute("aria-label", "Open User Writer");
     writerLauncher.textContent = "✦";
     writerLauncher.addEventListener("click", triggerUserWriter);
-    launcherGroup.append(launcher, writerLauncher);
+    const settingsLauncher = ctx.dom.createElement("button", { type: "button", class: "pp-launcher settings" });
+    settingsLauncher.title = "Open Persona Paths settings";
+    settingsLauncher.setAttribute("aria-label", "Open Persona Paths settings");
+    settingsLauncher.textContent = "⚙";
+    settingsLauncher.addEventListener("click", () => tab.activate());
+    launcherGroup.append(launcher, writerLauncher, settingsLauncher);
     floatLauncher.root.appendChild(launcherGroup);
   } catch (err) {
     console.warn("[Persona Paths] Native floating launcher unavailable", err);
@@ -1091,15 +1191,34 @@ function setup(ctx) {
   const manualStatus = ctx.dom.createElement("div", { class: "pp-manual-status" });
   manualStatus.textContent = "Manual runs ignore the automatic on/off toggle and can force Paths even on an OOC exchange.";
   let manualPending = false;
+  let manualTarget = null;
+  function matchesManualTarget(chatId, messageId) {
+    return manualPending && !!manualTarget && String(chatId || "") === manualTarget.chatId && String(messageId || "") === manualTarget.messageId;
+  }
+  function finishManualGeneration(status, message) {
+    manualPending = false;
+    manualTarget = null;
+    manualRun.disabled = false;
+    manualRun.textContent = "Generate Paths for latest reply";
+    manualStatus.classList.toggle("error", status === "error");
+    manualStatus.textContent = message;
+    setLauncherStatus(status, message);
+  }
   function triggerManualGeneration() {
     if (manualPending)
       return;
     manualPending = true;
+    manualTarget = null;
     manualRun.disabled = true;
     manualRun.textContent = "Finding latest reply…";
     manualStatus.classList.remove("error");
     manualStatus.textContent = "Resolving the active chat and latest assistant reply…";
-    ctx.sendToBackend({ type: "manual_generate_latest" });
+    setLauncherStatus("working");
+    try {
+      ctx.sendToBackend({ type: "manual_generate_latest" });
+    } catch (err) {
+      finishManualGeneration("error", err?.message || String(err));
+    }
   }
   manualRun.addEventListener("click", triggerManualGeneration);
   settings.append(manualRun, manualStatus);
@@ -1633,49 +1752,35 @@ function setup(ctx) {
       openRouterCatalogError = String(payload.error || "Could not load OpenRouter models. Manual model IDs still work.");
       updateModelPickers();
     } else if (payload.type === "manual_target") {
-      manualRun.textContent = "Generating latest reply…";
-      manualStatus.classList.remove("error");
-      manualStatus.textContent = payload.oocOverride ? "Forcing Paths on OOC exchange…" : "Manual Persona Paths generation is running.";
+      if (manualPending) {
+        manualTarget = { chatId: String(payload.chatId || ""), messageId: String(payload.messageId || "") };
+        manualRun.textContent = "Generating latest reply…";
+        manualStatus.classList.remove("error");
+        manualStatus.textContent = payload.oocOverride ? "Forcing Paths on OOC exchange…" : "Manual Persona Paths generation is running.";
+      }
     } else if (payload.type === "choices_loading") {
       selectedPathIntents = [];
       renderLoading(String(payload.messageId), String(payload.chatId));
-      if (manualPending)
+      if (matchesManualTarget(payload.chatId, payload.messageId))
         manualRun.textContent = "Generating latest reply…";
     } else if (payload.type === "choices_ready" && payload.data) {
       renderChoices(payload.data);
-      if (manualPending) {
-        manualPending = false;
-        manualRun.disabled = false;
-        manualRun.textContent = "Generate Paths for latest reply";
-        manualStatus.classList.remove("error");
-        manualStatus.textContent = "Fresh choices generated for the latest assistant reply.";
-      }
+      if (matchesManualTarget(payload.data.chatId, payload.data.messageId))
+        finishManualGeneration("success", "Fresh choices generated for the latest assistant reply.");
     } else if (payload.type === "choices_skipped") {
       const messageId = String(payload.messageId || "");
       if (messageId)
         removeCard(messageId);
-      if (manualPending) {
-        manualPending = false;
-        manualRun.disabled = false;
-        manualRun.textContent = "Generate Paths for latest reply";
-        manualStatus.classList.remove("error");
-        manualStatus.textContent = payload.reason === "ooc" ? "Skipped: the latest assistant reply is part of an OOC exchange." : "Persona Paths skipped this reply.";
+      if (matchesManualTarget(payload.chatId, payload.messageId)) {
+        finishManualGeneration("error", payload.reason === "ooc" ? "Skipped: the latest assistant reply is part of an OOC exchange." : "Persona Paths skipped this reply.");
       }
     } else if (payload.type === "choices_error") {
       renderError(String(payload.messageId), String(payload.chatId), String(payload.error || "Unknown error"));
-      if (manualPending) {
-        manualPending = false;
-        manualRun.disabled = false;
-        manualRun.textContent = "Generate Paths for latest reply";
-        manualStatus.classList.add("error");
-        manualStatus.textContent = String(payload.error || "Manual Persona Paths generation failed.");
-      }
+      if (matchesManualTarget(payload.chatId, payload.messageId))
+        finishManualGeneration("error", String(payload.error || "Manual Persona Paths generation failed."));
     } else if (payload.type === "manual_error") {
-      manualPending = false;
-      manualRun.disabled = false;
-      manualRun.textContent = "Generate Paths for latest reply";
-      manualStatus.classList.add("error");
-      manualStatus.textContent = String(payload.error || "Manual Persona Paths generation failed.");
+      if (manualPending)
+        finishManualGeneration("error", String(payload.error || "Manual Persona Paths generation failed."));
     } else if (payload.type === "writer_anchor") {
       const chatId = String(payload.chatId || "");
       const messageId = String(payload.messageId || "");
@@ -1690,13 +1795,6 @@ function setup(ctx) {
     } else if (payload.type === "request_error") {
       connectionStatus.classList.add("error");
       connectionStatus.textContent = String(payload.error || "Persona Paths backend request failed.");
-      if (manualPending) {
-        manualPending = false;
-        manualRun.disabled = false;
-        manualRun.textContent = "Generate Paths for latest reply";
-        manualStatus.classList.add("error");
-        manualStatus.textContent = String(payload.error || "Manual Persona Paths generation failed.");
-      }
     } else if (payload.type === "persona_selection_changed") {
       selectedPathIntents = [];
       writerHistory = [];
@@ -1857,6 +1955,16 @@ function setup(ctx) {
     flushPersonaGuidance();
     if (saveTimer)
       clearTimeout(saveTimer);
+    if (launcherStatusTimer)
+      clearTimeout(launcherStatusTimer);
+    stopResetWatch();
+    window.removeEventListener("resize", repositionLauncher);
+    try {
+      floatLauncher?.root?.removeEventListener("contextmenu", watchNativeReset, true);
+    } catch {}
+    try {
+      unsubLauncherDrag();
+    } catch {}
     if (guidanceModal) {
       try {
         guidanceModal.dismiss();

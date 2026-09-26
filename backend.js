@@ -4,7 +4,7 @@ var CONFIG_PATH = "config.json";
 var CACHE_PATH = "choices.json";
 var MEMORY_PATH = "relationship_memory.json";
 var DEFAULT_CONFIG = {
-  enabled: true,
+  enabled: false,
   choiceCount: 5,
   contextMessages: 12,
   recentUserExamples: 6,
@@ -1247,7 +1247,7 @@ async function handleAssistantMessage(chatId, messageId, force = false, userId, 
     const messages = await spindle.chat.getMessages(chatId);
     const target = messages.find((m) => m.id === messageId);
     if (!target || target.role !== "assistant")
-      return;
+      throw new Error("The targeted assistant reply is no longer available.");
     const persona = await resolvePersona(chatId, userId);
     const personaId = persona?.id || "no_persona";
     const oocMessageIds = config.skipOoc ? collectOocMessageIds(messages) : new Set;
@@ -1498,7 +1498,7 @@ spindle.onFrontendMessage(async (payload, userId) => {
       const personaId = String(payload.personaId || "");
       if (personaId && !await spindle.personas.get(personaId, userId))
         throw new Error("That persona is unavailable.");
-      if (Array.from(inFlight).some((key2) => key2.startsWith(`${chatId}:`)))
+      if (Array.from(inFlight).some((key) => key.startsWith(`${chatId}:`)))
         throw new Error("Wait for generation to finish before changing persona.");
       const key = personaSelectionKey(chatId, userId);
       if (personaId)
@@ -1671,6 +1671,9 @@ spindle.onFrontendMessage(async (payload, userId) => {
       const latestAssistant = [...messages].reverse().find((m) => m?.role === "assistant" && String(m?.content || "").trim().length > 0);
       if (!latestAssistant?.id)
         throw new Error("The active chat does not have an assistant reply to generate paths for yet.");
+      if (inFlight.has(`${activeChat.id}:${latestAssistant.id}`)) {
+        throw new Error("Paths are already generating for the latest assistant reply.");
+      }
       const manualOocIds = config.skipOoc ? collectOocMessageIds(messages) : new Set;
       const isOocOverride = config.skipOoc && manualOocIds.has(String(latestAssistant.id));
       spindle.sendToFrontend({

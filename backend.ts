@@ -80,7 +80,7 @@ const CACHE_PATH = 'choices.json'
 const MEMORY_PATH = 'relationship_memory.json'
 
 const DEFAULT_CONFIG: Config = {
-  enabled: true,
+  enabled: false,
   choiceCount: 5,
   contextMessages: 12,
   recentUserExamples: 6,
@@ -1395,7 +1395,7 @@ async function handleAssistantMessage(chatId: string, messageId: string, force =
   try {
     const messages = await spindle.chat.getMessages(chatId)
     const target = messages.find((m: any) => m.id === messageId)
-    if (!target || target.role !== 'assistant') return
+    if (!target || target.role !== 'assistant') throw new Error('The targeted assistant reply is no longer available.')
 
     const persona = await resolvePersona(chatId, userId)
     const personaId = persona?.id || 'no_persona'
@@ -1858,6 +1858,9 @@ spindle.onFrontendMessage(async (payload: any, userId: string) => {
         m?.role === 'assistant' && String(m?.content || '').trim().length > 0
       )
       if (!latestAssistant?.id) throw new Error('The active chat does not have an assistant reply to generate paths for yet.')
+      if (inFlight.has(`${activeChat.id}:${latestAssistant.id}`)) {
+        throw new Error('Paths are already generating for the latest assistant reply.')
+      }
 
       const manualOocIds = config.skipOoc ? collectOocMessageIds(messages) : new Set<string>()
       const isOocOverride = config.skipOoc && manualOocIds.has(String(latestAssistant.id))
