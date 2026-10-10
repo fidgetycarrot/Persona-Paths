@@ -1,5 +1,12 @@
 # Persona Paths
 
+## Interface refresh (unreleased, on top of v0.1.35)
+
+- The panel now opens on what you use every day: who you are playing, **Get paths for the latest reply**, **Write for me**, and the **Make paths after every reply** switch. Everything else is sorted into four tabs: **Persona**, **Paths**, **Models** and **Memory**.
+- The paths card under a reply has labelled **Write for me**, **Steer** and **Redo** buttons, larger text, and plain-case scene and badge labels. Hover (or tap) to read a path, click (or tap again) to add it, exactly as before.
+- The floating launcher uses icons for Write for me and settings, and the Write for me and Steer dialogs have labelled fields.
+- Labels, hints and status messages are reworded in plain language. Settings, saved Paths, permissions and behaviour are unchanged.
+
 ## v0.1.35 — on-demand floating launcher
 
 - Tap **Paths** to generate choices immediately for the latest assistant reply, without opening settings. This uses the same manual path as the panel and Extras action, including OOC override, Current Moment anchoring, selected persona and guidance, Cortex/relationship context, and model settings. New installs start in manual mode; existing automatic-generation preferences stay as saved.

@@ -2,6 +2,13 @@ type Ctx = any
 
 const EXT_VERSION = '0.1.35'
 const PATHS_ICON = `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 4v5a3 3 0 0 0 3 3h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M6 20v-3a5 5 0 0 1 5-5h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15 8 4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="4" r="2" fill="currentColor"/></svg>`
+const ICON = (d: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`
+const PEN_ICON = ICON('<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="M13.5 6.5l4 4"/>')
+const TUNE_ICON = ICON('<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>')
+const REDO_ICON = ICON('<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>')
+const STEER_ICON = ICON('<path d="M12 3v18"/><path d="M12 6h7l-2 3 2 3h-7"/>')
+const PIN_ICON = ICON('<path d="M12 21s-6-5.3-6-10a6 6 0 0 1 12 0c0 4.7-6 10-6 10z"/><circle cx="12" cy="11" r="2"/>')
+const CLOCK_ICON = ICON('<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>')
 const LAUNCHER_POSITION_KEY = 'persona_paths_launcher_position_v1'
 const LAUNCHER_WIDTH = 164
 const LAUNCHER_HEIGHT = 38
@@ -157,8 +164,8 @@ async function fillComposer(text: string) {
 
 function titleCaseStyle(style: any) {
   const pov = style?.pov === 'second' ? '2nd' : style?.pov === 'third' ? '3rd' : '1st'
-  const tense = style?.tense === 'past' ? 'Past' : 'Present'
-  return `${pov} · ${tense}`
+  const tense = style?.tense === 'past' ? 'past' : 'present'
+  return `${pov} person, ${tense} tense`
 }
 
 function appendRenderedText(parent: HTMLElement, text: string) {
@@ -306,65 +313,80 @@ export function setup(ctx: Ctx) {
     .pp-guidance-actions { display:flex; justify-content:flex-end; gap:7px; margin-top:9px; }
     .pp-guidance-hint { margin-top:7px; font-size:9.8px; line-height:1.35; color:var(--lumiverse-text-muted); opacity:.78; }
 
-    .pp-guidance-modal { display:flex; flex-direction:column; gap:12px; min-width:0; }
-    .pp-guidance-modal-copy { margin:0; font-size:12px; line-height:1.45; color:var(--lumiverse-text-muted); }
-    .pp-guidance-modal-input {
-      width:100%; min-height:150px; max-height:44vh; resize:vertical; box-sizing:border-box;
-      border:1px solid var(--lumiverse-border); border-radius:10px; background:var(--lumiverse-fill);
-      color:var(--lumiverse-text); padding:11px 12px; font:inherit; font-size:16px; line-height:1.45;
+    .pp-guidance-modal, .pp-writer-modal { display:flex; flex-direction:column; gap:12px; min-width:0; }
+    .pp-guidance-modal-copy, .pp-writer-copy { margin:0; font-size:13px; line-height:1.45; color:var(--lumiverse-text-muted); }
+    .pp-modal-field { display:flex; flex-direction:column; gap:6px; font-size:12.5px; font-weight:600; color:var(--lumiverse-text-muted); }
+    .pp-guidance-modal-input, .pp-writer-direction, .pp-writer-result {
+      width:100%; resize:vertical; box-sizing:border-box; border:1px solid var(--lumiverse-border); border-radius:10px;
+      background:var(--lumiverse-fill); color:var(--lumiverse-text); padding:10px 12px; font:inherit; font-weight:400; font-size:16px; line-height:1.45;
       overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
     }
-    .pp-guidance-modal-input:focus { outline:2px solid color-mix(in srgb, var(--lumiverse-accent, currentColor) 45%, transparent); outline-offset:1px; }
-    .pp-guidance-modal-save { display:flex; align-items:flex-start; gap:8px; font-size:12px; line-height:1.35; color:var(--lumiverse-text-muted); cursor:pointer; }
-    .pp-guidance-modal-save input { margin-top:2px; accent-color:var(--lumiverse-accent); }
-    .pp-guidance-modal-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
-    .pp-guidance-modal-error { min-height:1.2em; font-size:11px; color:var(--lumiverse-danger, #d97777); }
-    .pp-writer-modal { display:flex; flex-direction:column; gap:11px; min-width:0; }
-    .pp-writer-copy { margin:0; font-size:12px; line-height:1.45; color:var(--lumiverse-text-muted); }
-    .pp-writer-direction { width:100%; min-height:92px; max-height:30vh; resize:vertical; box-sizing:border-box; border:1px solid var(--lumiverse-border); border-radius:10px; background:var(--lumiverse-fill); color:var(--lumiverse-text); padding:10px 11px; font:inherit; font-size:16px; line-height:1.45; }
-    .pp-writer-result { width:100%; min-height:150px; max-height:36vh; resize:vertical; box-sizing:border-box; border:1px solid var(--lumiverse-border); border-radius:10px; background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text); padding:10px 11px; font:inherit; font-size:14px; line-height:1.45; }
-    .pp-writer-status { min-height:1.2em; font-size:11px; color:var(--lumiverse-text-muted); }
+    .pp-guidance-modal-input { min-height:150px; max-height:44vh; }
+    .pp-writer-direction { min-height:64px; max-height:30vh; }
+    .pp-writer-result { min-height:170px; max-height:36vh; font-size:15px; line-height:1.5; }
+    .pp-guidance-modal-input:focus, .pp-writer-direction:focus, .pp-writer-result:focus { outline:2px solid var(--pp-accent); outline-offset:1px; }
+    .pp-guidance-modal-save { display:flex; align-items:flex-start; gap:8px; font-size:13px; line-height:1.35; color:var(--lumiverse-text-muted); cursor:pointer; }
+    .pp-guidance-modal-save input { margin-top:2px; accent-color:var(--pp-accent); }
+    .pp-guidance-modal-actions, .pp-writer-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+    .pp-guidance-modal-error { min-height:1.2em; font-size:12.5px; color:var(--lumiverse-danger, #d97777); }
+    .pp-writer-status { min-height:1.2em; font-size:12.5px; color:var(--lumiverse-text-muted); }
     .pp-writer-status.error { color:var(--lumiverse-danger, #d97777); }
-    .pp-writer-history { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:10.5px; color:var(--lumiverse-text-muted); }
-    .pp-writer-actions { display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+    .pp-writer-history { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--lumiverse-text-muted); }
+    .pp-writer-history span { flex:1; }
+    .pp-guidance-modal .pp-btn, .pp-writer-modal .pp-btn { min-height:38px; padding:8px 14px; font-size:13px; }
     @media (max-width:620px), (pointer:coarse) {
-      .pp-guidance-modal-input { min-height:180px; max-height:38vh; resize:none; font-size:16px; }
-      .pp-guidance-modal-actions .pp-btn { min-height:42px; padding:10px 14px; }
+      .pp-guidance-modal-input { min-height:180px; max-height:38vh; resize:none; }
+      .pp-guidance-modal .pp-btn, .pp-writer-modal .pp-btn { min-height:44px; }
     }
 
-    .pp-settings { padding:14px; display:flex; flex-direction:column; gap:14px; color:var(--lumiverse-text); }
-    .pp-settings h3 { margin:0; font-size:16px; }
-    .pp-settings p { margin:0; font-size:12px; line-height:1.45; color:var(--lumiverse-text-muted); }
-    .pp-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .pp-settings, .pp-guidance-modal, .pp-writer-modal, .pp-launcher-group { --pp-accent:var(--lumiverse-accent, var(--lumiverse-primary, #8f7ae0)); --pp-on-accent:var(--lumiverse-on-primary, #fff); }
+    .pp-settings { padding:16px; display:flex; flex-direction:column; gap:14px; color:var(--lumiverse-text); max-width:760px; box-sizing:border-box; }
+    .pp-settings * { box-sizing:border-box; }
+    .pp-settings [hidden] { display:none !important; }
+    .pp-title { display:flex; align-items:baseline; gap:10px; }
+    .pp-settings h3 { margin:0; font-size:19px; line-height:1.2; flex:1; }
+    .pp-settings h4 { margin:0; font-size:14px; line-height:1.3; }
+    .pp-settings p { margin:0; font-size:12.5px; line-height:1.45; color:var(--lumiverse-text-muted); }
+    .pp-version { font-size:11.5px; color:var(--lumiverse-text-muted); }
+    .pp-now { display:flex; flex-direction:column; gap:12px; padding:14px; border:1px solid var(--lumiverse-border); border-radius:14px; background:var(--lumiverse-fill-subtle, rgba(127,127,127,.08)); }
+    .pp-tabs { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:2px; padding:3px; border-radius:10px; border:1px solid var(--lumiverse-border); background:var(--lumiverse-fill-subtle, rgba(127,127,127,.08)); }
+    .pp-tabs button { border:0; background:transparent; color:var(--lumiverse-text-muted); padding:6px 4px; min-height:32px; border-radius:7px; min-width:0; font:inherit; font-size:13px; cursor:pointer; }
+    .pp-tabs button[aria-selected="true"] { background:var(--lumiverse-fill); color:var(--lumiverse-text); font-weight:600; box-shadow:0 0 0 1px var(--lumiverse-border); }
+    .pp-panel { display:flex; flex-direction:column; gap:14px; }
+    .pp-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; }
     .pp-field { display:flex; flex-direction:column; gap:5px; min-width:0; }
-    .pp-label { font-size:11px; font-weight:700; color:var(--lumiverse-text-muted); }
-    .pp-hint { font-size:10px; color:var(--lumiverse-text-muted); opacity:.78; line-height:1.35; }
+    .pp-label { font-size:12.5px; font-weight:600; color:var(--lumiverse-text-muted); }
+    .pp-hint { font-size:12px; color:var(--lumiverse-text-muted); line-height:1.4; }
     .pp-settings select, .pp-settings input[type="number"], .pp-settings input[type="text"], .pp-settings textarea {
-      width:100%; box-sizing:border-box; border:1px solid var(--lumiverse-border); border-radius:9px;
-      background:var(--lumiverse-fill); color:var(--lumiverse-text); padding:8px 9px; font:inherit; font-size:12px;
+      width:100%; border:1px solid var(--lumiverse-border); border-radius:8px; min-height:36px;
+      background:var(--lumiverse-fill); color:var(--lumiverse-text); padding:8px 10px; font:inherit; font-size:13px;
     }
-    .pp-settings textarea { min-height:82px; resize:vertical; line-height:1.4; }
-    .pp-check { display:flex; align-items:center; gap:8px; font-size:12px; cursor:pointer; }
-    .pp-check input { accent-color:var(--lumiverse-accent); }
-    .pp-row { display:flex; gap:8px; align-items:center; }
+    .pp-settings textarea { min-height:96px; resize:vertical; line-height:1.45; }
+    .pp-settings :focus-visible, .pp-launcher:focus-visible { outline:2px solid var(--pp-accent); outline-offset:2px; }
+    .pp-check { display:flex; align-items:center; gap:10px; font-size:13px; line-height:1.35; cursor:pointer; }
+    .pp-check input { appearance:none; -webkit-appearance:none; flex-shrink:0; width:34px; height:20px; margin:0; border-radius:10px; background:var(--lumiverse-border); position:relative; cursor:pointer; transition:background .15s; }
+    .pp-check input::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:#fff; transition:transform .15s; }
+    .pp-check input:checked { background:var(--pp-accent); }
+    .pp-check input:checked::after { transform:translateX(14px); }
+    .pp-check + .pp-hint { margin:-8px 0 0 44px; }
+    .pp-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     .pp-btn {
-      border:1px solid var(--lumiverse-border); border-radius:9px; background:var(--lumiverse-fill); color:var(--lumiverse-text);
-      padding:8px 10px; font-size:11px; cursor:pointer;
+      display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--lumiverse-border); border-radius:8px;
+      background:var(--lumiverse-fill); color:var(--lumiverse-text); padding:7px 12px; min-height:34px; font:inherit; font-size:13px; line-height:1.2; cursor:pointer;
     }
-    .pp-btn:hover { background:var(--lumiverse-fill-subtle); }
-    .pp-btn.pp-primary {
-      font-weight:750; border-color:color-mix(in srgb, var(--lumiverse-accent, currentColor) 48%, var(--lumiverse-border));
-      background:color-mix(in srgb, var(--lumiverse-accent, currentColor) 10%, var(--lumiverse-fill));
-    }
-    .pp-btn.pp-primary:hover { background:color-mix(in srgb, var(--lumiverse-accent, currentColor) 16%, var(--lumiverse-fill)); }
-    .pp-btn:disabled { opacity:.55; cursor:default; }
-    .pp-manual-status { font-size:10.5px; line-height:1.35; color:var(--lumiverse-text-muted); margin-top:-7px; min-height:1em; }
-    .pp-manual-status.error { color:var(--lumiverse-danger, #d97777); }
-    .pp-persona-badge { font-size:11px; color:var(--lumiverse-text-muted); padding:7px 9px; background:var(--lumiverse-fill-subtle); border-radius:9px; }
-    .pp-connection-status { font-size:10.5px; line-height:1.35; color:var(--lumiverse-text-muted); margin-top:-7px; }
-    .pp-connection-status.error { color:var(--lumiverse-danger, #d97777); }
-    .pp-prism-status { font-size:10.5px; line-height:1.35; color:var(--lumiverse-text-muted); margin-top:-7px; }
-    .pp-divider { height:1px; background:var(--lumiverse-border); opacity:.7; }
+    .pp-btn:hover:not(:disabled) { border-color:var(--pp-accent); }
+    .pp-btn.pp-primary { font-weight:600; border-color:transparent; background:var(--pp-accent); color:var(--pp-on-accent); }
+    .pp-btn.pp-quiet { background:transparent; border-color:transparent; color:var(--lumiverse-text-muted); align-self:flex-start; }
+    .pp-btn:disabled { opacity:.5; cursor:default; }
+    .pp-btn svg { width:16px; height:16px; flex:0 0 auto; }
+    .pp-manual-status, .pp-connection-status, .pp-prism-status { font-size:12px; line-height:1.4; color:var(--lumiverse-text-muted); min-height:1em; }
+    .pp-connection-status, .pp-prism-status { margin-top:-8px; }
+    .pp-manual-status.error, .pp-connection-status.error { color:var(--lumiverse-danger, #d97777); }
+    .pp-persona-badge { font-size:12px; color:var(--lumiverse-text-muted); }
+    .pp-divider { height:1px; background:var(--lumiverse-border); opacity:.7; margin:2px 0; }
+    .pp-native-select-slot { width:100%; min-width:0; }
+    .pp-model-tools { display:flex; align-items:center; gap:8px; margin-top:-8px; flex-wrap:wrap; }
+    .pp-model-tools .pp-connection-status { margin-top:0; flex:1 1 200px; }
     .pp-launcher-group {
       width:100%; height:100%; display:flex; align-items:stretch; box-sizing:border-box; overflow:hidden;
       border:1px solid var(--lumiverse-border); border-radius:999px;
@@ -374,23 +396,18 @@ export function setup(ctx: Ctx) {
     .pp-launcher {
       min-width:0; height:100%; display:flex; align-items:center; justify-content:center; gap:7px; box-sizing:border-box;
       border:0; background:transparent; color:var(--lumiverse-text); padding:0 11px; cursor:pointer;
-      font:inherit; font-size:12px; font-weight:750; letter-spacing:.01em;
+      font:inherit; font-size:13px; font-weight:600;
     }
     .pp-launcher:hover { background:var(--lumiverse-fill-subtle); }
     .pp-launcher:disabled { cursor:default; opacity:.8; }
     .pp-launcher.paths { flex:1 1 auto; }
-    .pp-launcher.paths[data-status="working"] { color:var(--lumiverse-accent, currentColor); }
+    .pp-launcher.paths svg { color:var(--pp-accent); }
+    .pp-launcher.paths[data-status="working"] { color:var(--pp-accent); }
     .pp-launcher.paths[data-status="success"] { color:var(--lumiverse-success, #59b98b); }
     .pp-launcher.paths[data-status="error"] { color:var(--lumiverse-danger, #d97777); }
-    .pp-launcher.writer { flex:0 0 38px; width:38px; padding:0; border-left:1px solid var(--lumiverse-border); font-size:17px; }
-    .pp-launcher.settings { flex:0 0 30px; width:30px; padding:0; border-left:1px solid var(--lumiverse-border); font-size:16px; }
-    .pp-launcher svg { width:16px; height:16px; color:var(--lumiverse-accent, currentColor); flex:0 0 auto; }
-    .pp-native-select-slot { width:100%; min-width:0; }
-    .pp-model-tools { display:flex; align-items:center; gap:8px; margin-top:-7px; flex-wrap:wrap; }
-    .pp-model-tools .pp-connection-status { margin-top:0; flex:1 1 220px; }
-    .pp-settings [hidden] { display:none !important; }
-    .pp-version { font-size:10px; color:var(--lumiverse-text-muted); opacity:.7; margin-top:-8px; }
-    @media (max-width: 620px) { .pp-grid { grid-template-columns:1fr; } .pp-choice-text { font-size:12px; } }
+    .pp-launcher.writer, .pp-launcher.settings { flex:0 0 36px; width:36px; padding:0; border-left:1px solid var(--lumiverse-border); color:var(--lumiverse-text-muted); }
+    .pp-launcher.writer:hover, .pp-launcher.settings:hover { color:var(--lumiverse-text); }
+    .pp-launcher svg { width:16px; height:16px; flex:0 0 auto; }
   `)
 
   function widgetJson(value: any) {
@@ -448,7 +465,7 @@ export function setup(ctx: Ctx) {
       }
 
       const modal = ctx.ui.showModal({
-        title: 'Regenerate with guidance',
+        title: 'Steer new paths',
         width: 560,
         maxHeight: Math.min(680, Math.max(360, window.innerHeight - 24)),
       })
@@ -456,26 +473,26 @@ export function setup(ctx: Ctx) {
 
       const wrap = ctx.dom.createElement('div', { class: 'pp-guidance-modal' }) as HTMLElement
       const copy = ctx.dom.createElement('p', { class: 'pp-guidance-modal-copy' }) as HTMLElement
-      copy.textContent = 'Tell Persona Paths what direction you had in mind. This applies only to this regeneration unless you save it as persona guidance.'
+      copy.textContent = 'Say what you had in mind. It is used once, unless you save it to the persona’s notes.'
 
       const input = ctx.dom.createElement('textarea', {
         class: 'pp-guidance-modal-input',
-        placeholder: 'Example: Stop arguing and give me options where Rook physically leaves camp.',
+        placeholder: 'For example: stop arguing and give me options where Rook leaves camp.',
       }) as HTMLTextAreaElement
       input.autocapitalize = 'sentences'
       input.autocomplete = 'off'
       input.spellcheck = true
 
-      const save = ctx.dom.createElement('input', { type: 'checkbox' }) as HTMLInputElement
+      const save = ctx.dom.createElement('input', { type: 'checkbox', role: 'switch' }) as HTMLInputElement
       const saveLabel = ctx.dom.createElement('label', { class: 'pp-guidance-modal-save' }) as HTMLLabelElement
-      saveLabel.append(save, document.createTextNode('Save this as selected persona guidance'))
+      saveLabel.append(save, document.createTextNode('Also save this to the persona’s notes'))
 
       const error = ctx.dom.createElement('div', { class: 'pp-guidance-modal-error', role: 'status' }) as HTMLElement
       const actions = ctx.dom.createElement('div', { class: 'pp-guidance-modal-actions' }) as HTMLElement
       const cancel = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
       cancel.textContent = 'Cancel'
       const generate = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn pp-primary' }) as HTMLButtonElement
-      generate.textContent = 'Generate new paths'
+      generate.textContent = 'Make new paths'
       actions.append(cancel, generate)
       wrap.append(copy, input, saveLabel, error, actions)
       modal.root.appendChild(wrap)
@@ -493,7 +510,7 @@ export function setup(ctx: Ctx) {
       generate.addEventListener('click', () => {
         const guidance = String(input.value || '').trim()
         if (!guidance) {
-          error.textContent = 'Add a little guidance first.'
+          error.textContent = 'Type what you want first.'
           input.focus()
           return
         }
@@ -534,7 +551,7 @@ export function setup(ctx: Ctx) {
       writerHistoryIndex = 0
 
       const modal = ctx.ui.showModal({
-        title: currentDraft.trim() ? 'User Writer · Rewrite my draft' : 'User Writer · Write for me',
+        title: currentDraft.trim() ? 'Rewrite my message' : 'Write for me',
         width: 620,
         maxHeight: Math.min(760, Math.max(420, window.innerHeight - 24)),
       })
@@ -543,11 +560,11 @@ export function setup(ctx: Ctx) {
       const wrap = ctx.dom.createElement('div', { class: 'pp-writer-modal' }) as HTMLElement
       const copy = ctx.dom.createElement('p', { class: 'pp-writer-copy' }) as HTMLElement
       copy.textContent = currentDraft.trim()
-        ? 'User Writer will preserve what you decided and smooth it into one in-character user turn.'
-        : 'The composer is empty, so User Writer will write a fresh in-character user turn from the current scene.'
+        ? 'Keeps what you decided and smooths it into one in-character message.'
+        : 'Your message box is empty, so this writes a new in-character message from the current scene.'
       const direction = ctx.dom.createElement('textarea', {
         class: 'pp-writer-direction',
-        placeholder: 'Optional direction: less confrontational; answer her question; keep the action from Path #3; make it more playful…',
+        placeholder: 'For example: less confrontational, answer her question, keep the action from path 3.',
       }) as HTMLTextAreaElement
       direction.autocapitalize = 'sentences'
       direction.autocomplete = 'off'
@@ -555,27 +572,31 @@ export function setup(ctx: Ctx) {
 
       const result = ctx.dom.createElement('textarea', { class: 'pp-writer-result' }) as HTMLTextAreaElement
       result.value = currentDraft
-      result.placeholder = 'Generated draft will appear here.'
+      result.placeholder = 'The draft appears here.'
       result.spellcheck = true
 
       const status = ctx.dom.createElement('div', { class: 'pp-writer-status', role: 'status' }) as HTMLElement
       const history = ctx.dom.createElement('div', { class: 'pp-writer-history' }) as HTMLElement
       const prev = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
-      prev.textContent = '← Older'
+      prev.textContent = 'Older'
       const count = ctx.dom.createElement('span') as HTMLElement
       const next = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
-      next.textContent = 'Newer →'
-      history.append(prev, count, next)
+      next.textContent = 'Newer'
+      history.append(count, prev, next)
 
       const actions = ctx.dom.createElement('div', { class: 'pp-writer-actions' }) as HTMLElement
       const close = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
       close.textContent = 'Close'
       const restore = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
-      restore.textContent = 'Use selected draft'
+      restore.textContent = 'Use this draft'
       const generate = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn pp-primary' }) as HTMLButtonElement
-      generate.textContent = currentDraft.trim() ? 'Rewrite draft' : 'Write for me'
+      generate.textContent = currentDraft.trim() ? 'Rewrite' : 'Write for me'
       actions.append(close, restore, generate)
-      wrap.append(copy, direction, result, status, history, actions)
+      const directionField = ctx.dom.createElement('label', { class: 'pp-modal-field' }) as HTMLElement
+      directionField.append(document.createTextNode('Anything to change? (optional)'), direction)
+      const resultField = ctx.dom.createElement('label', { class: 'pp-modal-field' }) as HTMLElement
+      resultField.append(document.createTextNode('Draft'), result)
+      wrap.append(copy, directionField, resultField, history, status, actions)
       modal.root.appendChild(wrap)
 
       const updateHistoryUi = () => {
@@ -586,7 +607,7 @@ export function setup(ctx: Ctx) {
         }
         writerHistoryIndex = Math.max(0, Math.min(writerHistoryIndex, writerHistory.length - 1))
         result.value = writerHistory[writerHistoryIndex] || ''
-        count.textContent = `Draft ${writerHistoryIndex + 1} of ${writerHistory.length}${writerHistoryIndex === 0 ? ' · original' : ''}`
+        count.textContent = `Draft ${writerHistoryIndex + 1} of ${writerHistory.length}${writerHistoryIndex === 0 ? ' (your original)' : ''}`
         prev.disabled = writerHistoryIndex <= 0
         next.disabled = writerHistoryIndex >= writerHistory.length - 1
         restore.disabled = false
@@ -597,7 +618,7 @@ export function setup(ctx: Ctx) {
       next.addEventListener('click', () => { if (writerHistoryIndex < writerHistory.length - 1) { writerHistoryIndex++; updateHistoryUi() } })
       restore.addEventListener('click', () => {
         const value = String(result.value || '')
-        if (replaceComposer(value)) status.textContent = 'Selected draft restored to the composer.'
+        if (replaceComposer(value)) status.textContent = 'This draft is now in your message box.'
       })
       close.addEventListener('click', () => modal.dismiss())
       generate.addEventListener('click', () => {
@@ -610,7 +631,7 @@ export function setup(ctx: Ctx) {
         next.disabled = true
         generate.textContent = draft.trim() ? 'Rewriting…' : 'Writing…'
         status.classList.remove('error')
-        status.textContent = draft.trim() ? 'Polishing your draft with User Writer…' : 'Writing an in-character response with User Writer…'
+        status.textContent = draft.trim() ? 'Rewriting your message…' : 'Writing a message…'
         ctx.sendToBackend({
           type: 'user_writer',
           chatId,
@@ -645,9 +666,9 @@ export function setup(ctx: Ctx) {
     const ui = writerModal && (writerModal as any).__ppWriter
     if (ui) {
       ui.status.classList.remove('error')
-      ui.status.textContent = writerMode === 'write' ? 'Fresh draft written and placed in the composer.' : 'Draft rewritten and placed in the composer.'
+      ui.status.textContent = writerMode === 'write' ? 'New draft written and put in your message box.' : 'Rewritten and put in your message box.'
       ui.generate.disabled = false
-      ui.generate.textContent = 'Generate another'
+      ui.generate.textContent = 'Try another'
       ui.updateHistoryUi()
     }
   }
@@ -657,7 +678,7 @@ export function setup(ctx: Ctx) {
     const ui = writerModal && (writerModal as any).__ppWriter
     if (ui) {
       ui.status.classList.add('error')
-      ui.status.textContent = message || 'User Writer failed.'
+      ui.status.textContent = message || 'Write for me failed.'
       ui.generate.disabled = false
       ui.generate.textContent = 'Try again'
       ui.updateHistoryUi()
@@ -730,115 +751,119 @@ export function setup(ctx: Ctx) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root { color-scheme: light dark; }
+  :where(html) { font-family:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   html, body { margin:0; padding:0; width:100%; overflow:hidden; background:transparent; }
-  body { box-sizing:border-box; color:var(--lumiverse-text); font-family:inherit; }
+  body { box-sizing:border-box; color:var(--lumiverse-text); font-family:inherit; --accent:var(--lumiverse-accent, var(--lumiverse-primary, #8f7ae0)); --dim:var(--lumiverse-text-muted); --line:var(--lumiverse-border); }
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   .card {
-    width:100%; min-width:0; margin:10px 0 2px; padding:10px;
-    border:1px solid var(--lumiverse-border); border-radius:14px;
+    width:100%; min-width:0; margin:10px 0 2px; padding:12px;
+    border:1px solid var(--line); border-radius:14px;
     background:color-mix(in srgb, var(--lumiverse-fill-subtle) 88%, transparent);
-    box-shadow:0 5px 18px rgba(0,0,0,.12);
   }
-  .head { display:flex; align-items:center; gap:8px; min-width:0; margin:0 2px 8px; min-height:26px; }
-  .brand { font-size:12px; font-weight:700; letter-spacing:.02em; color:var(--lumiverse-text-muted); }
-  .state {
-    display:flex; justify-content:space-between; gap:12px; align-items:center; min-width:0;
-    margin:0 2px 10px; padding:7px 9px; border:1px solid var(--lumiverse-border);
-    border-radius:10px; background:color-mix(in srgb, var(--lumiverse-fill) 72%, transparent);
-  }
-  .state[hidden] { display:none !important; }
-  .state-item { display:flex; align-items:center; gap:6px; min-width:0; color:var(--lumiverse-text-muted); }
-  .state-item:last-child { justify-content:flex-end; text-align:right; }
-  .state-glyph { flex:0 0 auto; font-size:10px; opacity:.7; }
-  .state-value { min-width:0; font-size:9.8px; font-weight:750; letter-spacing:.055em; text-transform:uppercase; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .style { font-size:10px; color:var(--lumiverse-text-muted); opacity:.78; }
-  .toast { font-size:10px; color:var(--lumiverse-text-muted); opacity:0; transition:opacity .15s; }
+  .head { display:flex; align-items:center; gap:6px; min-width:0; margin-bottom:10px; }
+  .brand { font-size:13px; font-weight:700; white-space:nowrap; }
+  .style { font-size:11.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .toast { font-size:11.5px; color:var(--accent); opacity:0; transition:opacity .15s; white-space:nowrap; }
   .toast.show { opacity:1; }
   .spacer { flex:1; min-width:0; }
-  .icon {
-    border:0; background:transparent; color:var(--lumiverse-text-muted); cursor:pointer;
-    border-radius:8px; width:28px; height:28px; padding:0; font-size:17px; line-height:1;
+  svg { width:15px; height:15px; flex:0 0 auto; }
+  .tool {
+    display:inline-flex; align-items:center; gap:5px; border:1px solid transparent; background:transparent; color:var(--dim);
+    cursor:pointer; border-radius:8px; min-height:30px; padding:4px 8px; font:inherit; font-size:12px; white-space:nowrap;
   }
-  .icon:hover { background:var(--lumiverse-fill); color:var(--lumiverse-text); }
-  .choices { display:flex; flex-direction:column; gap:7px; min-width:0; }
+  .tool:hover, .tool:focus-visible { background:var(--lumiverse-fill); color:var(--lumiverse-text); border-color:var(--line); outline:none; }
+  .state { display:flex; gap:6px 16px; flex-wrap:wrap; min-width:0; margin:0 0 10px; font-size:12px; color:var(--dim); }
+  .state-item { display:inline-flex; align-items:center; gap:5px; min-width:0; }
+  .state-item svg { width:13px; height:13px; }
+  .state-value { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .choices { display:flex; flex-direction:column; gap:8px; min-width:0; }
   .choice {
     display:block; width:100%; min-width:0; max-width:100%; text-align:left; cursor:pointer;
-    border:1px solid transparent; border-radius:12px; padding:10px 12px;
-    background:var(--lumiverse-fill); color:var(--lumiverse-text);
+    border:1px solid var(--line); border-radius:12px; padding:11px 12px;
+    background:var(--lumiverse-fill); color:var(--lumiverse-text); font:inherit;
   }
-  .choice:hover { border-color:var(--lumiverse-border-hover, var(--lumiverse-border)); background:var(--lumiverse-fill-subtle); }
-  .top { display:flex; align-items:center; gap:8px; min-width:0; margin-bottom:4px; }
+  .choice:hover, .choice:focus-visible { border-color:var(--accent); outline:none; }
+  .top { display:flex; align-items:center; gap:9px; min-width:0; margin-bottom:5px; }
   .num {
-    width:20px; height:20px; flex:0 0 auto; border-radius:999px; display:inline-flex;
-    align-items:center; justify-content:center; font-size:10px; font-weight:800;
-    background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text-muted);
+    width:22px; height:22px; flex:0 0 auto; border-radius:50%; display:inline-flex;
+    align-items:center; justify-content:center; font-size:11.5px; font-weight:700;
+    background:color-mix(in srgb, var(--accent) 24%, transparent); color:var(--lumiverse-text);
   }
-  .title { min-width:0; font-size:12px; font-weight:700; overflow-wrap:anywhere; }
-  .heat { position:relative; margin-left:auto; display:inline-flex; gap:3px; flex:0 0 auto; align-items:center; cursor:help; }
-  .heat-dot { width:6px; height:6px; border-radius:999px; border:1px solid currentColor; opacity:.38; }
-  .heat-dot.on { background:currentColor; opacity:.82; }
-  .advance {
-    margin-left:2px; flex:0 0 auto; font-size:9px; font-weight:700; letter-spacing:.04em;
-    text-transform:uppercase; opacity:.72; padding:2px 6px; border:1px solid var(--lumiverse-border);
-    border-radius:999px; white-space:nowrap;
-  }
+  .title { min-width:0; font-size:14px; font-weight:650; overflow-wrap:anywhere; }
+  .heat { position:relative; margin-left:auto; display:inline-flex; gap:3px; flex:0 0 auto; align-items:center; cursor:help; color:var(--dim); }
+  .heat-dot { width:6px; height:6px; border-radius:999px; border:1px solid currentColor; opacity:.45; }
+  .heat-dot.on { background:currentColor; opacity:.9; }
+  .advance { flex:0 0 auto; font-size:11px; color:var(--dim); padding:2px 8px; border:1px solid var(--line); border-radius:999px; white-space:nowrap; }
   .text {
-    display:block; min-width:0; max-width:100%; font-size:12.5px; line-height:1.45;
-    color:var(--lumiverse-text-muted); white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;
-    filter:blur(4px); opacity:.42; user-select:none; pointer-events:none;
+    display:block; min-width:0; max-width:100%; padding-left:31px; font-size:13.5px; line-height:1.5;
+    color:var(--dim); white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;
+    filter:blur(4px); opacity:.45; user-select:none; pointer-events:none;
     transition:filter .13s ease, opacity .13s ease;
   }
-  .choice:hover .text, .choice:focus-visible .text, .choice.revealed .text { filter:none; opacity:1; user-select:text; }
-  .footer-hint { margin:9px 2px 1px; text-align:center; font-size:9.5px; color:var(--lumiverse-text-muted); opacity:.68; letter-spacing:.02em; }
-  .loading { display:flex; align-items:center; gap:8px; color:var(--lumiverse-text-muted); font-size:12px; padding:4px 2px; }
-  .dot { width:6px; height:6px; border-radius:999px; background:currentColor; animation:pulse 1.1s infinite alternate; }
+  .choice:hover .text, .choice:focus-visible .text, .choice.revealed .text { filter:none; opacity:1; user-select:text; color:var(--lumiverse-text); }
+  .footer-hint { margin:10px 2px 0; font-size:11.5px; color:var(--dim); }
+  .loading { display:flex; align-items:center; gap:8px; color:var(--dim); font-size:13px; padding:6px 2px; }
+  .dot { width:6px; height:6px; border-radius:999px; background:var(--accent); animation:pulse 1.1s infinite alternate; }
   @keyframes pulse { from{opacity:.25; transform:scale(.8)} to{opacity:1; transform:scale(1.1)} }
-  .error { font-size:12px; line-height:1.4; color:var(--lumiverse-text-muted); padding:4px 2px; }
+  @media (prefers-reduced-motion: reduce) { .dot { animation:none; } .text { transition:none; } }
+  .error { font-size:13px; line-height:1.45; color:var(--lumiverse-text); padding:4px 2px; }
   .btn {
-    border:1px solid var(--lumiverse-border); border-radius:9px; background:var(--lumiverse-fill);
-    color:var(--lumiverse-text); padding:8px 10px; font:inherit; font-size:11px; cursor:pointer;
+    border:1px solid var(--line); border-radius:8px; background:var(--lumiverse-fill);
+    color:var(--lumiverse-text); padding:7px 12px; min-height:34px; font:inherit; font-size:13px; cursor:pointer;
   }
-  .btn:hover { background:var(--lumiverse-fill-subtle); }
-  .primary { font-weight:750; }
-  .guide { margin-top:9px; padding:10px; border:1px solid var(--lumiverse-border); border-radius:11px; background:var(--lumiverse-fill); }
-  .guide[hidden] { display:none !important; }
-  .guide-title { font-size:11.5px; font-weight:750; margin-bottom:6px; }
+  .btn:hover { border-color:var(--accent); }
+  .primary { font-weight:600; background:var(--accent); border-color:transparent; color:var(--lumiverse-on-primary, #fff); }
+  .guide { margin-top:10px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--lumiverse-fill); }
+  .guide-title { font-size:13px; font-weight:650; margin-bottom:8px; }
   textarea {
-    width:100%; min-height:72px; resize:vertical; border:1px solid var(--lumiverse-border); border-radius:9px;
-    background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text); padding:8px 9px; font:inherit; font-size:12px; line-height:1.4;
+    width:100%; min-height:72px; resize:vertical; border:1px solid var(--line); border-radius:8px;
+    background:var(--lumiverse-fill-subtle); color:var(--lumiverse-text); padding:8px 10px; font:inherit; font-size:13px; line-height:1.45;
   }
-  .save { display:flex; align-items:center; gap:7px; margin-top:8px; font-size:10.5px; color:var(--lumiverse-text-muted); cursor:pointer; }
-  .actions { display:flex; justify-content:flex-end; gap:7px; margin-top:9px; }
-  .hint { margin-top:7px; font-size:9.8px; line-height:1.35; color:var(--lumiverse-text-muted); opacity:.78; }
+  textarea:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .save { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12.5px; color:var(--dim); cursor:pointer; }
+  .save input { accent-color:var(--accent); }
+  .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:10px; }
+  .hint { margin-top:8px; font-size:12px; line-height:1.4; color:var(--dim); }
   em { font-style:italic; }
+  @media (max-width:480px) {
+    .text { padding-left:0; }
+    .top { flex-wrap:wrap; row-gap:6px; }
+    .title { flex:1 1 calc(100% - 80px); }
+    .advance { margin-left:31px; }
+    .style { display:none; }
+    .tool span { display:none; }
+    .tool { width:34px; min-height:34px; padding:0; justify-content:center; }
+    .tool svg { width:17px; height:17px; }
+  }
 </style>
 </head>
 <body>
   <section class="card">
     <div class="head">
-      <span class="brand">Persona Paths</span>
+      <span class="brand">Paths</span>
       <span class="style" id="style"></span>
-      <span class="toast" id="toast">Added to composer</span>
+      <span class="toast" id="toast" role="status">Added to your message</span>
       <span class="spacer"></span>
-      <button type="button" class="icon" id="polishBtn" title="User Writer: write or rewrite the composer" aria-label="Open User Writer">✦</button>
-      <button type="button" class="icon" id="guideBtn" title="Regenerate with guidance" aria-label="Regenerate with guidance">✎</button>
-      <button type="button" class="icon" id="regenBtn" title="Regenerate choices" aria-label="Regenerate choices">↻</button>
+      <button type="button" class="tool" id="polishBtn" title="Write or rewrite your message" aria-label="Write for me">${PEN_ICON}<span>Write for me</span></button>
+      <button type="button" class="tool" id="guideBtn" title="Say what you want, then get new paths" aria-label="Steer new paths">${STEER_ICON}<span>Steer</span></button>
+      <button type="button" class="tool" id="regenBtn" title="Get a new set of paths" aria-label="Redo paths">${REDO_ICON}<span>Redo</span></button>
     </div>
     <div class="state" id="sceneState" hidden>
-      <div class="state-item"><span class="state-glyph">⌖</span><span class="state-value" id="stateLocation"></span></div>
-      <div class="state-item"><span class="state-glyph">◷</span><span class="state-value" id="stateMoment"></span></div>
+      <div class="state-item">${PIN_ICON}<span class="state-value" id="stateLocation"></span></div>
+      <div class="state-item">${CLOCK_ICON}<span class="state-value" id="stateMoment"></span></div>
     </div>
     <div class="choices" id="choices"></div>
     <div class="footer-hint" id="footerHint" hidden></div>
     <div class="guide" id="guide" hidden>
-      <div class="guide-title">Regenerate with guidance</div>
-      <textarea id="guidance" placeholder="What direction were you thinking? e.g. Stop arguing and give me options where Rook physically leaves camp."></textarea>
-      <label class="save"><input type="checkbox" id="saveGuidance"> Save this as selected persona guidance</label>
+      <div class="guide-title">Steer new paths</div>
+      <textarea id="guidance" placeholder="What did you have in mind? For example: stop arguing and give me options where Rook leaves camp."></textarea>
+      <label class="save"><input type="checkbox" id="saveGuidance"> Also save this to the persona’s notes</label>
       <div class="actions">
         <button type="button" class="btn" id="cancelGuide">Cancel</button>
-        <button type="button" class="btn primary" id="generateGuide">Generate new paths</button>
+        <button type="button" class="btn primary" id="generateGuide">Make new paths</button>
       </div>
-      <div class="hint">One-shot by default. Saving appends this correction to the selected persona’s private Persona Paths guidance.</div>
+      <div class="hint">Used once, unless you save it.</div>
     </div>
   </section>
 <script>
@@ -914,8 +939,8 @@ export function setup(ctx: Ctx) {
     row.append(dot, label); host.appendChild(row);
   } else if (model.mode === 'error') {
     polishBtn.hidden = false; guideBtn.hidden = true; regenBtn.hidden = false;
-    const msg = document.createElement('div'); msg.className = 'error'; msg.textContent = 'Couldn’t generate choices. ' + (model.error || 'Unknown error');
-    const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'btn'; retry.style.marginTop = '8px'; retry.textContent = 'Retry';
+    const msg = document.createElement('div'); msg.className = 'error'; msg.textContent = 'Could not make paths. ' + (model.error || 'Unknown error');
+    const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'btn'; retry.style.marginTop = '8px'; retry.textContent = 'Try again';
     retry.addEventListener('click', () => post({ type:'retry' }));
     host.append(msg, retry);
   } else {
@@ -928,8 +953,8 @@ export function setup(ctx: Ctx) {
       const intensity = Math.max(1, Math.min(3, Math.round(Number(choice.intensity) || 0)));
       if (intensity) {
         const heat = document.createElement('span'); heat.className = 'heat';
-        const heatLabel = intensity === 1 ? 'Low impact' : intensity === 2 ? 'Decisive' : 'Volatile';
-        heat.title = 'Intensity ' + intensity + '/3 — ' + heatLabel;
+        const heatLabel = intensity === 1 ? 'a small move' : intensity === 2 ? 'a decisive move' : 'a risky move';
+        heat.title = 'Intensity ' + intensity + ' of 3: ' + heatLabel;
         heat.setAttribute('aria-label', heat.title);
         for (let dotIndex = 1; dotIndex <= 3; dotIndex++) {
           const dot = document.createElement('span'); dot.className = 'heat-dot' + (dotIndex <= intensity ? ' on' : ''); heat.appendChild(dot);
@@ -937,21 +962,21 @@ export function setup(ctx: Ctx) {
         top.appendChild(heat);
       }
       if (choice.advances_scene) {
-        const badge = document.createElement('span'); badge.className = 'advance'; badge.textContent = 'Advance scene'; top.appendChild(badge);
+        const badge = document.createElement('span'); badge.className = 'advance'; badge.textContent = 'Moves the scene on'; top.appendChild(badge);
       }
       const body = document.createElement('span'); body.className = 'text'; renderRich(body, choice.text || '');
       button.append(top, body);
       button.addEventListener('click', () => {
         if (!canHover && !button.classList.contains('revealed')) {
           button.classList.add('revealed');
-          showToast('Revealed · tap again to add');
+          showToast('Tap again to add');
           return;
         }
-        post({ type:'choice', index }); showToast('Added · click another to combine');
+        post({ type:'choice', index }); showToast('Added. Pick another to combine.');
       });
       host.appendChild(button);
     });
-    footerHint.textContent = canHover ? 'Scan the labels · hover to reveal a Path · click to add' : 'Scan the labels · tap to reveal · tap again to add';
+    footerHint.textContent = canHover ? 'Hover a path to read it. Click to add it to your message.' : 'Tap a path to read it. Tap again to add it.';
     footerHint.hidden = false;
   }
 
@@ -1155,14 +1180,14 @@ export function setup(ctx: Ctx) {
     launcherStatusTimer = null
     if (!launcherButton) return
     const label = launcherButton.querySelector('span')
-    if (label) label.textContent = status === 'working' ? 'Paths…' : status === 'success' ? 'Ready ✓' : status === 'error' ? 'Failed !' : 'Paths'
+    if (label) label.textContent = status === 'working' ? 'Working…' : status === 'success' ? 'Ready' : status === 'error' ? 'Failed' : 'Paths'
     launcherButton.dataset.status = status
     launcherButton.disabled = status === 'working'
     launcherButton.title = status === 'error'
-      ? `Paths failed: ${detail || 'Unknown error'}. Click to retry.`
-      : status === 'working' ? 'Generating Paths for the latest assistant reply'
-      : status === 'success' ? 'Fresh Paths are ready under the latest reply'
-      : `Generate Paths for latest reply · v${EXT_VERSION}`
+      ? `Paths failed: ${detail || 'Unknown error'}. Click to try again.`
+      : status === 'working' ? 'Making paths for the latest reply'
+      : status === 'success' ? 'New paths are ready under the latest reply'
+      : 'Get paths for the latest reply'
     launcherButton.setAttribute('aria-label', launcherButton.title)
     if (status === 'success') launcherStatusTimer = setTimeout(() => setLauncherStatus('idle'), 3500)
   }
@@ -1218,14 +1243,14 @@ export function setup(ctx: Ctx) {
     launcher.addEventListener('click', triggerManualGeneration)
     setLauncherStatus('idle')
     const writerLauncher = ctx.dom.createElement('button', { type: 'button', class: 'pp-launcher writer' }) as HTMLButtonElement
-    writerLauncher.title = 'User Writer — write or rewrite the current composer'
-    writerLauncher.setAttribute('aria-label', 'Open User Writer')
-    writerLauncher.textContent = '✦'
+    writerLauncher.title = 'Write for me: write or rewrite your message'
+    writerLauncher.setAttribute('aria-label', 'Write for me')
+    writerLauncher.innerHTML = PEN_ICON
     writerLauncher.addEventListener('click', triggerUserWriter)
     const settingsLauncher = ctx.dom.createElement('button', { type: 'button', class: 'pp-launcher settings' }) as HTMLButtonElement
     settingsLauncher.title = 'Open Persona Paths settings'
     settingsLauncher.setAttribute('aria-label', 'Open Persona Paths settings')
-    settingsLauncher.textContent = '⚙'
+    settingsLauncher.innerHTML = TUNE_ICON
     settingsLauncher.addEventListener('click', () => tab.activate())
     launcherGroup.append(launcher, writerLauncher, settingsLauncher)
     floatLauncher.root.appendChild(launcherGroup)
@@ -1261,29 +1286,27 @@ export function setup(ctx: Ctx) {
   heading.textContent = 'Persona Paths'
   const version = ctx.dom.createElement('div', { class: 'pp-version' }) as HTMLElement
   version.textContent = `v${EXT_VERSION}`
+  const titleRow = ctx.dom.createElement('div', { class: 'pp-title' }) as HTMLElement
+  titleRow.append(heading, version)
   const intro = ctx.dom.createElement('p') as HTMLElement
-  intro.textContent = 'Private, persona-aware next moves. The extension reads the role-play, but its choices and relationship notes are never inserted into story context.'
-  settings.append(heading, version, intro)
+  intro.textContent = 'Ideas for what your character does next. They stay private and never enter the story.'
 
-  const enabled = ctx.dom.createElement('input', { type: 'checkbox' }) as HTMLInputElement
+  const enabled = ctx.dom.createElement('input', { type: 'checkbox', role: 'switch' }) as HTMLInputElement
   const enabledLabel = ctx.dom.createElement('label', { class: 'pp-check' }) as HTMLLabelElement
-  enabledLabel.append(enabled, document.createTextNode('Generate choices after character replies'))
+  enabledLabel.append(enabled, document.createTextNode('Make paths after every reply'))
   enabled.addEventListener('change', () => scheduleSave({ enabled: enabled.checked }, 0))
-  settings.appendChild(enabledLabel)
 
-  const skipOoc = ctx.dom.createElement('input', { type: 'checkbox' }) as HTMLInputElement
+  const skipOoc = ctx.dom.createElement('input', { type: 'checkbox', role: 'switch' }) as HTMLInputElement
   const skipOocLabel = ctx.dom.createElement('label', { class: 'pp-check' }) as HTMLLabelElement
-  skipOocLabel.append(skipOoc, document.createTextNode('Skip OOC exchanges'))
+  skipOocLabel.append(skipOoc, document.createTextNode('Skip out-of-character (OOC) messages'))
   skipOoc.addEventListener('change', () => scheduleSave({ skipOoc: skipOoc.checked }, 0))
-  settings.appendChild(skipOocLabel)
   const skipOocHint = ctx.dom.createElement('div', { class: 'pp-hint' }) as HTMLElement
-  skipOocHint.textContent = 'Automatic generation ignores [OOC], [OOC]:, [ooc}:, (OOC):, and OOC: turns. The assistant reply to an OOC user message is skipped too, even if it does not repeat the marker. Manual Generate Paths can explicitly override this guard. OOC exchanges still stay out of portrayal examples and relationship learning.'
-  settings.appendChild(skipOocHint)
+  skipOocHint.textContent = 'Automatic paths leave OOC messages, and the reply to them, alone. The Get paths button still works on them.'
 
   const manualRun = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn pp-primary' }) as HTMLButtonElement
-  manualRun.textContent = 'Generate Paths for latest reply'
+  manualRun.textContent = 'Get paths for the latest reply'
   const manualStatus = ctx.dom.createElement('div', { class: 'pp-manual-status' }) as HTMLElement
-  manualStatus.textContent = 'Manual runs ignore the automatic on/off toggle and can force Paths even on an OOC exchange.'
+  manualStatus.textContent = 'Works even when automatic paths are off.'
   let manualPending = false
   let manualTarget: { chatId: string; messageId: string } | null = null
 
@@ -1296,7 +1319,7 @@ export function setup(ctx: Ctx) {
     manualPending = false
     manualTarget = null
     manualRun.disabled = false
-    manualRun.textContent = 'Generate Paths for latest reply'
+    manualRun.textContent = 'Get paths for the latest reply'
     manualStatus.classList.toggle('error', status === 'error')
     manualStatus.textContent = message
     setLauncherStatus(status, message)
@@ -1307,16 +1330,20 @@ export function setup(ctx: Ctx) {
     manualPending = true
     manualTarget = null
     manualRun.disabled = true
-    manualRun.textContent = 'Finding latest reply…'
+    manualRun.textContent = 'Finding the latest reply…'
     manualStatus.classList.remove('error')
-    manualStatus.textContent = 'Resolving the active chat and latest assistant reply…'
+    manualStatus.textContent = 'Looking for the latest reply…'
     setLauncherStatus('working')
     try { ctx.sendToBackend({ type: 'manual_generate_latest' }) }
     catch (err: any) { finishManualGeneration('error', err?.message || String(err)) }
   }
 
   manualRun.addEventListener('click', triggerManualGeneration)
-  settings.append(manualRun, manualStatus)
+  const writeRun = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
+  writeRun.innerHTML = PEN_ICON
+  writeRun.append(document.createTextNode('Write for me'))
+  writeRun.title = 'Write or rewrite your next message'
+  writeRun.addEventListener('click', triggerUserWriter)
 
   // Also make the same manual run available from Lumiverse's native Extras menu.
   try {
@@ -1407,7 +1434,7 @@ export function setup(ctx: Ctx) {
   }
 
   const connectionSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' }) as HTMLElement
-  settings.appendChild(createLabeledField(ctx, 'Persona Paths connection', connectionSlot, 'Connection used to generate the CYOA Path choices. This can stay completely separate from your story model.'))
+  const connectionField = createLabeledField(ctx, 'Connection', connectionSlot, 'The AI connection that writes your paths. It can be different from your story model.')
   const connectionPicker = ctx.components.mountSelect(connectionSlot, {
     value: '',
     options: [],
@@ -1423,19 +1450,17 @@ export function setup(ctx: Ctx) {
 
   const connectionStatus = ctx.dom.createElement('div', { class: 'pp-connection-status' }) as HTMLElement
   connectionStatus.textContent = 'Loading Lumiverse connections…'
-  settings.appendChild(connectionStatus)
   const refreshConnections = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
-  refreshConnections.textContent = 'Refresh connections'
+  refreshConnections.textContent = 'Reload connections'
   refreshConnections.addEventListener('click', () => {
     connectionStatus.classList.remove('error')
     connectionStatus.textContent = 'Refreshing Lumiverse connections…'
     ctx.sendToBackend({ type: 'get_state' })
   })
-  settings.appendChild(refreshConnections)
+  refreshConnections.classList.add('pp-quiet')
 
   const modelSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' }) as HTMLElement
-  const modelField = createLabeledField(ctx, 'Paths model', modelSlot, 'OpenRouter connections get a live searchable model catalog. Choose Use connection model to follow the connection profile.')
-  settings.appendChild(modelField)
+  const modelField = createLabeledField(ctx, 'Model', modelSlot, 'Search the OpenRouter list, or keep the connection’s own model.')
   const modelPicker = ctx.components.mountSelect(modelSlot, {
     value: CONNECTION_MODEL,
     options: [],
@@ -1456,7 +1481,7 @@ export function setup(ctx: Ctx) {
   })
   const modelCatalogStatus = ctx.dom.createElement('div', { class: 'pp-connection-status' }) as HTMLElement
   const refreshModels = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
-  refreshModels.textContent = 'Refresh OpenRouter models'
+  refreshModels.textContent = 'Reload model list'
   refreshModels.addEventListener('click', () => {
     openRouterModels = []
     openRouterCatalogError = ''
@@ -1464,23 +1489,19 @@ export function setup(ctx: Ctx) {
   })
   const modelTools = ctx.dom.createElement('div', { class: 'pp-model-tools' }) as HTMLElement
   modelTools.append(modelCatalogStatus, refreshModels)
-  settings.appendChild(modelTools)
 
   const modelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'e.g. google/gemini-3.1-pro-preview' }) as HTMLInputElement
   modelOverride.addEventListener('input', () => scheduleSave({ modelOverride: modelOverride.value }))
-  const modelOverrideWrap = createLabeledField(ctx, 'Paths model ID — editable', modelOverride, 'Exact model ID sent to the provider. Edit or paste an ID here at any time; leave blank to use the connection model.')
-  settings.appendChild(modelOverrideWrap)
+  const modelOverrideWrap = createLabeledField(ctx, 'Model ID', modelOverride, 'The exact ID sent to the provider. Leave blank to use the connection’s model.')
 
   const writerDivider = ctx.dom.createElement('div', { class: 'pp-divider' }) as HTMLElement
-  settings.appendChild(writerDivider)
-  const writerHeading = ctx.dom.createElement('h3') as HTMLElement
-  writerHeading.textContent = 'User Writer'
+  const writerHeading = ctx.dom.createElement('h4') as HTMLElement
+  writerHeading.textContent = 'Write for me (User Writer)'
   const writerIntro = ctx.dom.createElement('p') as HTMLElement
-  writerIntro.textContent = 'Write For Me and Rewrite/Polish are independent from Path generation. They stay available when Paths are disabled, skipped, blocked, or fail.'
-  settings.append(writerHeading, writerIntro)
+  writerIntro.textContent = 'Writes or polishes your next message. It works even when paths are off or fail.'
 
   const writerConnectionSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' }) as HTMLElement
-  settings.appendChild(createLabeledField(ctx, 'User Writer connection', writerConnectionSlot, 'Defaults to Same as Persona Paths, or choose a different connection/provider specifically for prose writing.'))
+  const writerConnectionField = createLabeledField(ctx, 'Connection', writerConnectionSlot, 'Same as paths, unless you pick another.')
   const writerConnectionPicker = ctx.components.mountSelect(writerConnectionSlot, {
     value: '__same_as_paths__',
     options: [],
@@ -1494,11 +1515,10 @@ export function setup(ctx: Ctx) {
     onChange: (connectionId: string) => scheduleSave({ writerConnectionId: connectionId === '__same_as_paths__' ? '' : connectionId }, 0),
   })
   const writerConnectionStatus = ctx.dom.createElement('div', { class: 'pp-connection-status' }) as HTMLElement
-  writerConnectionStatus.textContent = 'User Writer currently follows the Persona Paths connection.'
-  settings.appendChild(writerConnectionStatus)
+  writerConnectionStatus.textContent = 'Using the paths connection.'
 
   const writerModelSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' }) as HTMLElement
-  settings.appendChild(createLabeledField(ctx, 'User Writer model', writerModelSlot, 'When the resolved writer connection is OpenRouter, search the live model catalog by friendly name or exact model ID.'))
+  const writerModelField = createLabeledField(ctx, 'Model', writerModelSlot)
   const writerModelPicker = ctx.components.mountSelect(writerModelSlot, {
     value: CONNECTION_MODEL,
     options: [],
@@ -1518,12 +1538,10 @@ export function setup(ctx: Ctx) {
     },
   })
   const writerModelCatalogStatus = ctx.dom.createElement('div', { class: 'pp-connection-status' }) as HTMLElement
-  settings.appendChild(writerModelCatalogStatus)
 
   const writerModelOverride = ctx.dom.createElement('input', { type: 'text', placeholder: 'e.g. anthropic/claude-sonnet-5' }) as HTMLInputElement
   writerModelOverride.addEventListener('input', () => scheduleSave({ writerModelOverride: writerModelOverride.value }))
-  const writerModelOverrideWrap = createLabeledField(ctx, 'Writer model ID — editable', writerModelOverride, 'Exact model ID sent to the provider. Edit or paste an ID here at any time; leave blank to use the connection model.')
-  settings.appendChild(writerModelOverrideWrap)
+  const writerModelOverrideWrap = createLabeledField(ctx, 'Model ID', writerModelOverride, 'The exact ID sent to the provider. Leave blank to use the connection’s model.')
 
   function updateOneModelPicker(picker: any, manualWrap: HTMLElement, status: HTMLElement, conn: any, override: string, writer = false) {
     const openRouter = isOpenRouterConnection(conn)
@@ -1593,16 +1611,14 @@ export function setup(ctx: Ctx) {
   const writerMaxTokens = ctx.dom.createElement('input', { type: 'number', min: '500', max: '32000', step: '100' }) as HTMLInputElement
   writerMaxTokens.addEventListener('change', () => scheduleSave({ writerMaxTokens: Number(writerMaxTokens.value) }, 0))
   writerTuningGrid.append(
-    createLabeledField(ctx, 'Writer temperature', writerTemperature, 'Independent prose-writing temperature.'),
-    createLabeledField(ctx, 'Writer max output tokens', writerMaxTokens, 'Independent writer budget. Always-thinking Kimi models still get the automatic 16k floor.'),
+    createLabeledField(ctx, 'Creativity (temperature)', writerTemperature),
+    createLabeledField(ctx, 'Length limit (tokens)', writerMaxTokens),
   )
-  settings.appendChild(writerTuningGrid)
 
-  const writerReasoningToggle = ctx.dom.createElement('input', { type: 'checkbox' }) as HTMLInputElement
+  const writerReasoningToggle = ctx.dom.createElement('input', { type: 'checkbox', role: 'switch' }) as HTMLInputElement
   const writerReasoningLabel = ctx.dom.createElement('label', { class: 'pp-check' }) as HTMLLabelElement
-  writerReasoningLabel.append(writerReasoningToggle, document.createTextNode('Use User Writer connection reasoning / thinking'))
+  writerReasoningLabel.append(writerReasoningToggle, document.createTextNode('Let the model think first'))
   writerReasoningToggle.addEventListener('change', () => scheduleSave({ writerUseReasoning: writerReasoningToggle.checked }, 0))
-  settings.appendChild(writerReasoningLabel)
 
   const grid = ctx.dom.createElement('div', { class: 'pp-grid' }) as HTMLElement
   const pov = ctx.dom.createElement('select') as HTMLSelectElement
@@ -1618,7 +1634,7 @@ export function setup(ctx: Ctx) {
   tense.addEventListener('change', () => scheduleSave({ tense: tense.value }, 0))
 
   const detail = ctx.dom.createElement('select') as HTMLSelectElement
-  ;[['compact','Compact'],['normal','Normal'],['detailed','Detailed']].forEach(([v,l]) => {
+  ;[['compact','Short'],['normal','Normal'],['detailed','Long']].forEach(([v,l]) => {
     const o = document.createElement('option'); o.value=v; o.textContent=l; detail.appendChild(o)
   })
   detail.addEventListener('change', () => scheduleSave({ detail: detail.value }, 0))
@@ -1627,12 +1643,11 @@ export function setup(ctx: Ctx) {
   choiceCount.addEventListener('change', () => scheduleSave({ choiceCount: Number(choiceCount.value) }, 0))
 
   grid.append(
-    createLabeledField(ctx, 'POV / person', pov),
+    createLabeledField(ctx, 'How many paths', choiceCount),
+    createLabeledField(ctx, 'Detail', detail),
+    createLabeledField(ctx, 'Point of view', pov),
     createLabeledField(ctx, 'Tense', tense),
-    createLabeledField(ctx, 'Choice detail', detail),
-    createLabeledField(ctx, 'Number of choices', choiceCount),
   )
-  settings.appendChild(grid)
 
   const behaviorGrid = ctx.dom.createElement('div', { class: 'pp-grid' }) as HTMLElement
   const generationDelay = ctx.dom.createElement('select') as HTMLSelectElement
@@ -1648,7 +1663,7 @@ export function setup(ctx: Ctx) {
   adultContent.addEventListener('change', () => scheduleSave({ adultContent: adultContent.value }, 0))
 
   const prismIntegration = ctx.dom.createElement('select') as HTMLSelectElement
-  ;[['auto','Auto'],['manual','Manual'],['off','Off']].forEach(([v,l]) => {
+  ;[['auto','Match Prism'],['manual','My own colour'],['off','Off']].forEach(([v,l]) => {
     const o = document.createElement('option'); o.value=v; o.textContent=l; prismIntegration.appendChild(o)
   })
   prismIntegration.addEventListener('change', () => {
@@ -1665,16 +1680,18 @@ export function setup(ctx: Ctx) {
     prismColorTimer = setTimeout(() => ctx.sendToBackend({ type: 'set_prism_color_override', personaId, color: prismColorInput.value }), 220)
   })
 
-  behaviorGrid.append(
-    createLabeledField(ctx, 'Choice generation delay', generationDelay, 'Waits until the assistant message has rendered, then gives Lumiverse this extra settling time.'),
-    createLabeledField(ctx, 'Adult-content handling', adultContent, 'Match scene keeps the current explicitness. Allow explicit permits explicit adult choices when contextually appropriate; it does not force escalation.'),
-    createLabeledField(ctx, 'Prism integration', prismIntegration, 'Auto detects Prism’s active persona color. Manual uses the color you set below. Color markup is always stripped before the CYOA model sees the story.'),
-    createLabeledField(ctx, 'Manual Prism persona color', prismColorInput, 'Stored per active persona. Use #RRGGBB, for example #B6E472. Manual mode always wins over historical Prism evidence.'),
+  const delayField = createLabeledField(ctx, 'Wait before making paths', generationDelay, 'Gives the reply time to finish showing.')
+  const adultField = createLabeledField(ctx, 'Adult content', adultContent, 'Match scene follows the story. Allow explicit permits it when it fits, without pushing for it.')
+  behaviorGrid.append(delayField, adultField)
+  const prismHeading = ctx.dom.createElement('h4') as HTMLElement
+  prismHeading.textContent = 'Speech colour'
+  const prismGrid = ctx.dom.createElement('div', { class: 'pp-grid' }) as HTMLElement
+  prismGrid.append(
+    createLabeledField(ctx, 'Colour spoken lines', prismIntegration, 'Match Prism uses the colour Prism gives your persona.'),
+    createLabeledField(ctx, 'My own colour', prismColorInput, 'A hex code such as #B6E472, saved for each persona.'),
   )
-  settings.appendChild(behaviorGrid)
   const prismStatus = ctx.dom.createElement('div', { class: 'pp-prism-status' }) as HTMLElement
   prismStatus.textContent = 'Checking Prism…'
-  settings.appendChild(prismStatus)
 
   const grid2 = ctx.dom.createElement('div', { class: 'pp-grid' }) as HTMLElement
   const contextMessages = ctx.dom.createElement('input', { type: 'number', min: '6', max: '40', step: '1' }) as HTMLInputElement
@@ -1684,48 +1701,40 @@ export function setup(ctx: Ctx) {
   const storyMemoryChunks = ctx.dom.createElement('input', { type: 'number', min: '1', max: '12', step: '1' }) as HTMLInputElement
   storyMemoryChunks.addEventListener('change', () => scheduleSave({ storyMemoryChunks: Number(storyMemoryChunks.value) }, 0))
   grid2.append(
-    createLabeledField(ctx, 'Scene messages', contextMessages, 'Recent story context sent verbatim to the CYOA model. Current-scene evidence always outranks older memories.'),
-    createLabeledField(ctx, 'Your portrayal examples', recentUserExamples, 'Recent USER turns used to learn how you actually play the persona.'),
-    createLabeledField(ctx, 'Cortex story memories', storyMemoryChunks, 'How many top-ranked Memory Cortex memories Persona Paths may add. Entity, relationship, and narrative-arc context are retrieved separately when available. Default: 6.'),
+    createLabeledField(ctx, 'Recent messages to read', contextMessages, 'How much of the current scene the model sees.'),
+    createLabeledField(ctx, 'Examples of your writing', recentUserExamples, 'Your recent messages, used to learn how you play this persona.'),
   )
-  settings.appendChild(grid2)
+  const cortexCountField = createLabeledField(ctx, 'Cortex memories to add', storyMemoryChunks, 'How many long-term memories to bring in.')
 
-  const longTermStoryMemoryToggle = ctx.dom.createElement('input', { type: 'checkbox' }) as HTMLInputElement
+  const longTermStoryMemoryToggle = ctx.dom.createElement('input', { type: 'checkbox', role: 'switch' }) as HTMLInputElement
   const longTermStoryMemoryLabel = ctx.dom.createElement('label', { class: 'pp-check' }) as HTMLLabelElement
   longTermStoryMemoryLabel.append(longTermStoryMemoryToggle, document.createTextNode('Use Lumiverse Memory Cortex'))
   longTermStoryMemoryToggle.addEventListener('change', () => {
     storyMemoryChunks.disabled = !longTermStoryMemoryToggle.checked
     scheduleSave({ longTermStoryMemory: longTermStoryMemoryToggle.checked }, 0)
   })
-  settings.appendChild(longTermStoryMemoryLabel)
   const longTermStoryMemoryHint = ctx.dom.createElement('div', { class: 'pp-hint' }) as HTMLElement
-  longTermStoryMemoryHint.textContent = 'Cortex-first, read-only retrieval: relevant memories + entity context + relationships + active narrative arc. Requires Lumiverse’s Memories permission. If Cortex is unavailable, Persona Paths falls back to chat memory, then the recent scene.'
-  settings.appendChild(longTermStoryMemoryHint)
+  longTermStoryMemoryHint.textContent = 'Read-only. Needs the Memories permission. Without Cortex, paths use chat memory, then the recent scene.'
   const cortexStatus = ctx.dom.createElement('div', { class: 'pp-hint' }) as HTMLElement
   cortexStatus.textContent = 'Checking Memory Cortex permission…'
-  settings.appendChild(cortexStatus)
 
-  const relationshipMemoryToggle = ctx.dom.createElement('input', { type: 'checkbox' }) as HTMLInputElement
+  const relationshipMemoryToggle = ctx.dom.createElement('input', { type: 'checkbox', role: 'switch' }) as HTMLInputElement
   const relationshipLabel = ctx.dom.createElement('label', { class: 'pp-check' }) as HTMLLabelElement
-  relationshipLabel.append(relationshipMemoryToggle, document.createTextNode('Keep private relationship memory'))
+  relationshipLabel.append(relationshipMemoryToggle, document.createTextNode('Remember how your persona treats each character'))
   relationshipMemoryToggle.addEventListener('change', () => scheduleSave({ relationshipMemory: relationshipMemoryToggle.checked }, 0))
-  settings.appendChild(relationshipLabel)
+  const relationshipHint = ctx.dom.createElement('div', { class: 'pp-hint' }) as HTMLElement
+  relationshipHint.textContent = 'Private notes kept by Persona Paths. They never enter the story.'
 
-  const reasoningToggle = ctx.dom.createElement('input', { type: 'checkbox' }) as HTMLInputElement
+  const reasoningToggle = ctx.dom.createElement('input', { type: 'checkbox', role: 'switch' }) as HTMLInputElement
   const reasoningLabel = ctx.dom.createElement('label', { class: 'pp-check' }) as HTMLLabelElement
-  reasoningLabel.append(reasoningToggle, document.createTextNode('Use connection reasoning / thinking'))
+  reasoningLabel.append(reasoningToggle, document.createTextNode('Let the model think first'))
   reasoningToggle.addEventListener('change', () => scheduleSave({ useReasoning: reasoningToggle.checked }, 0))
-  settings.appendChild(reasoningLabel)
   const reasoningHint = ctx.dom.createElement('div', { class: 'pp-hint' }) as HTMLElement
-  reasoningHint.textContent = 'Kimi K3 and K2.7 always think. When this is off, Persona Paths automatically uses low effort on K3 and gives always-thinking Kimi models extra output headroom.'
-  settings.appendChild(reasoningHint)
+  reasoningHint.textContent = 'Kimi K3 and K2.7 always think. With this off, K3 thinks as little as it can.'
 
-  const divider = ctx.dom.createElement('div', { class: 'pp-divider' }) as HTMLElement
-  settings.appendChild(divider)
 
   const personaBadge = ctx.dom.createElement('div', { class: 'pp-persona-badge' }) as HTMLElement
-  personaBadge.textContent = 'Writing as: loading…'
-  settings.appendChild(personaBadge)
+  personaBadge.textContent = 'Loading your persona…'
 
   const personaSelector = ctx.dom.createElement('select', { 'aria-label': 'Persona for this chat' }) as HTMLSelectElement
   personaSelector.addEventListener('change', () => {
@@ -1734,7 +1743,7 @@ export function setup(ctx: Ctx) {
     personaInstructions.disabled = true
     ctx.sendToBackend({ type: 'set_chat_persona', chatId: currentState?.activeChatId, personaId: personaSelector.value })
   })
-  settings.appendChild(createLabeledField(ctx, 'Persona for this chat', personaSelector, 'Used by both Persona Paths and User Writer. Guidance is saved separately for each persona.'))
+  const personaField = createLabeledField(ctx, 'Playing as, in this chat', personaSelector)
   let personaSaveTimer: any = null
   let pendingPersonaGuidance: { personaId: string; text: string } | null = null
   function flushPersonaGuidance() {
@@ -1743,7 +1752,7 @@ export function setup(ctx: Ctx) {
     if (pendingPersonaGuidance) ctx.sendToBackend({ type: 'set_persona_override', ...pendingPersonaGuidance })
     pendingPersonaGuidance = null
   }
-  const personaInstructions = ctx.dom.createElement('textarea', { placeholder: 'Optional: how this persona behaves, especially exceptions or relationship patterns…' }) as HTMLTextAreaElement
+  const personaInstructions = ctx.dom.createElement('textarea', { placeholder: 'Optional' }) as HTMLTextAreaElement
   personaInstructions.addEventListener('input', () => {
     const personaId = currentState?.activePersona?.id
     if (!personaId) return
@@ -1751,11 +1760,11 @@ export function setup(ctx: Ctx) {
     pendingPersonaGuidance = { personaId, text: personaInstructions.value }
     personaSaveTimer = setTimeout(flushPersonaGuidance, 220)
   })
-  settings.appendChild(createLabeledField(ctx, 'Persona guidance', personaInstructions, 'Stored privately by Persona Paths. Useful for exceptions like “soft with Elena, reckless with everyone else.”'))
+  const personaGuidanceField = createLabeledField(ctx, 'Notes on this persona', personaInstructions, 'How they act, and any exceptions. For example: soft with Elena, reckless with everyone else. Kept private.')
 
-  const globalInstructions = ctx.dom.createElement('textarea', { placeholder: 'Optional global rules for all personas…' }) as HTMLTextAreaElement
+  const globalInstructions = ctx.dom.createElement('textarea', { placeholder: 'Optional' }) as HTMLTextAreaElement
   globalInstructions.addEventListener('input', () => scheduleSave({ globalInstructions: globalInstructions.value }))
-  settings.appendChild(createLabeledField(ctx, 'Global guidance', globalInstructions))
+  const globalGuidanceField = createLabeledField(ctx, 'Rules for every persona', globalInstructions)
 
   const advancedGrid = ctx.dom.createElement('div', { class: 'pp-grid' }) as HTMLElement
   const temperature = ctx.dom.createElement('input', { type: 'number', min: '0', max: '2', step: '0.05' }) as HTMLInputElement
@@ -1763,15 +1772,55 @@ export function setup(ctx: Ctx) {
   const maxTokens = ctx.dom.createElement('input', { type: 'number', min: '500', max: '32000', step: '100' }) as HTMLInputElement
   maxTokens.addEventListener('change', () => scheduleSave({ maxTokens: Number(maxTokens.value) }, 0))
   advancedGrid.append(
-    createLabeledField(ctx, 'Temperature', temperature),
-    createLabeledField(ctx, 'Max output tokens', maxTokens, 'Base budget. Always-thinking Kimi models are automatically raised to at least 16k so reasoning cannot consume the entire reply.'),
+    createLabeledField(ctx, 'Creativity (temperature)', temperature),
+    createLabeledField(ctx, 'Length limit (tokens)', maxTokens, 'Kimi models that always think get at least 16,000.'),
   )
-  settings.appendChild(advancedGrid)
 
   const clearMemory = ctx.dom.createElement('button', { type: 'button', class: 'pp-btn' }) as HTMLButtonElement
-  clearMemory.textContent = 'Clear private relationship memory'
+  clearMemory.textContent = 'Clear these notes'
   clearMemory.addEventListener('click', () => ctx.sendToBackend({ type: 'clear_relationship_memory' }))
-  settings.appendChild(clearMemory)
+  clearMemory.classList.add('pp-quiet')
+
+  // ---- Layout: what you do every day on top, set-once options in tabs below ----
+  const h4 = (text: string) => { const el = ctx.dom.createElement('h4') as HTMLElement; el.textContent = text; return el }
+  const panel = (...children: HTMLElement[]) => { const el = ctx.dom.createElement('section', { class: 'pp-panel', role: 'tabpanel' }) as HTMLElement; el.append(...children); return el }
+  const nowCard = ctx.dom.createElement('div', { class: 'pp-now' }) as HTMLElement
+  const actionRow = ctx.dom.createElement('div', { class: 'pp-row' }) as HTMLElement
+  actionRow.append(manualRun, writeRun)
+  nowCard.append(personaField, personaBadge, actionRow, manualStatus, enabledLabel)
+  const writerSection = ctx.dom.createElement('div', { class: 'pp-panel' }) as HTMLElement
+  writerSection.append(writerHeading, writerIntro, writerConnectionField, writerConnectionStatus, writerModelField, writerModelCatalogStatus, writerModelOverrideWrap, writerTuningGrid, writerReasoningLabel)
+  const views = [
+    { id: 'persona', label: 'Persona', el: panel(personaGuidanceField, globalGuidanceField) },
+    { id: 'paths', label: 'Paths', el: panel(grid, behaviorGrid, skipOocLabel, skipOocHint, writerDivider, prismHeading, prismGrid, prismStatus) },
+    { id: 'models', label: 'Models', el: panel(h4('Paths'), connectionField, connectionStatus, refreshConnections, modelField, modelTools, modelOverrideWrap, advancedGrid, reasoningLabel, reasoningHint, ctx.dom.createElement('div', { class: 'pp-divider' }) as HTMLElement, writerSection) },
+    { id: 'memory', label: 'Memory', el: panel(grid2, longTermStoryMemoryLabel, longTermStoryMemoryHint, cortexCountField, cortexStatus, relationshipLabel, relationshipHint, clearMemory) },
+  ]
+  const tabBar = ctx.dom.createElement('div', { class: 'pp-tabs', role: 'tablist', 'aria-label': 'Persona Paths settings' }) as HTMLElement
+  function showView(id: string, focus = false) {
+    for (const view of views) {
+      const selected = view.id === id
+      const button = tabBar.querySelector(`[data-pp-view="${view.id}"]`) as HTMLButtonElement
+      view.el.hidden = !selected
+      button.setAttribute('aria-selected', String(selected))
+      button.tabIndex = selected ? 0 : -1
+      if (selected && focus) button.focus()
+    }
+  }
+  views.forEach((view, index) => {
+    const button = ctx.dom.createElement('button', { type: 'button', role: 'tab', 'data-pp-view': view.id }) as HTMLButtonElement
+    button.textContent = view.label
+    button.addEventListener('click', () => showView(view.id))
+    button.addEventListener('keydown', (event) => {
+      const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+      if (!step) return
+      event.preventDefault()
+      showView(views[(index + step + views.length) % views.length].id, true)
+    })
+    tabBar.appendChild(button)
+  })
+  settings.append(titleRow, intro, nowCard, tabBar, ...views.map(view => view.el))
+  showView('persona')
 
   function applyState(state: any) {
     currentState = state
@@ -1794,8 +1843,8 @@ export function setup(ctx: Ctx) {
     longTermStoryMemoryToggle.checked = cfg.longTermStoryMemory !== false
     storyMemoryChunks.disabled = !longTermStoryMemoryToggle.checked
     cortexStatus.textContent = state?.memoriesGranted
-      ? 'Memory Cortex permission granted. Persona Paths only performs read operations.'
-      : 'Memory Cortex permission not granted yet; Persona Paths will use chat-memory/recent-scene fallback until it is granted.'
+      ? 'Cortex access is on. Persona Paths only reads from it.'
+      : 'Cortex access is not granted yet, so the fallback is used.'
     relationshipMemoryToggle.checked = cfg.relationshipMemory !== false
     reasoningToggle.checked = !!cfg.useReasoning
     if (document.activeElement !== modelOverride) modelOverride.value = cfg.modelOverride || ''
@@ -1848,8 +1897,8 @@ export function setup(ctx: Ctx) {
       ? selectedPathsConn
       : conns.find((c: any) => String(c.id) === writerConnectionId)
     writerConnectionStatus.textContent = writerConnectionId === '__same_as_paths__'
-      ? `Following Persona Paths${chosenWriterConn ? ` · ${String(chosenWriterConn.name || chosenWriterConn.model || '')}` : ''}.`
-      : `Independent writer connection${chosenWriterConn ? ` · ${String(chosenWriterConn.name || chosenWriterConn.model || '')}` : ''}.`
+      ? `Using the paths connection${chosenWriterConn ? `: ${String(chosenWriterConn.name || chosenWriterConn.model || '')}` : ''}.`
+      : `Using its own connection${chosenWriterConn ? `: ${String(chosenWriterConn.name || chosenWriterConn.model || '')}` : ''}.`
 
     updateModelPickers()
 
@@ -1859,13 +1908,13 @@ export function setup(ctx: Ctx) {
       connectionStatus.textContent = connectionError
     } else {
       connectionStatus.classList.remove('error')
-      connectionStatus.textContent = `${conns.length} Lumiverse LLM connection${conns.length === 1 ? '' : 's'} available.`
+      connectionStatus.textContent = `${conns.length} connection${conns.length === 1 ? '' : 's'} found in Lumiverse.`
     }
 
     const personaError = String(state?.personaError || state?.personaListError || '')
-    personaBadge.textContent = `Writing as: ${persona?.name || 'none'}${personaError ? ` — ${personaError}` : ''}`
+    personaBadge.textContent = `Writing as ${persona?.name || 'no one yet'}.${personaError ? ` ${personaError}` : ''}`
     personaSelector.replaceChildren()
-    personaSelector.add(new Option('Use Lumiverse active persona', ''))
+    personaSelector.add(new Option('Whoever is active in Lumiverse', ''))
     for (const item of state?.personas || []) personaSelector.add(new Option(item.name || 'Unnamed persona', item.id))
     if (state?.selectedPersonaId && !Array.from(personaSelector.options).some(option => option.value === state.selectedPersonaId)) {
       personaSelector.add(new Option('Selected persona (unavailable)', state.selectedPersonaId))
@@ -1896,29 +1945,29 @@ export function setup(ctx: Ctx) {
     else if (payload.type === 'manual_target') {
       if (manualPending) {
         manualTarget = { chatId: String(payload.chatId || ''), messageId: String(payload.messageId || '') }
-        manualRun.textContent = 'Generating latest reply…'
+        manualRun.textContent = 'Making paths…'
         manualStatus.classList.remove('error')
         manualStatus.textContent = payload.oocOverride
-          ? 'Forcing Paths on OOC exchange…'
-          : 'Manual Persona Paths generation is running.'
+          ? 'Making paths for an OOC message…'
+          : 'Making paths…'
       }
     }
     else if (payload.type === 'choices_loading') {
       selectedPathIntents = []
       renderLoading(String(payload.messageId), String(payload.chatId))
-      if (matchesManualTarget(payload.chatId, payload.messageId)) manualRun.textContent = 'Generating latest reply…'
+      if (matchesManualTarget(payload.chatId, payload.messageId)) manualRun.textContent = 'Making paths…'
     }
     else if (payload.type === 'choices_ready' && payload.data) {
       renderChoices(payload.data)
       if (matchesManualTarget(payload.data.chatId, payload.data.messageId))
-        finishManualGeneration('success', 'Fresh choices generated for the latest assistant reply.')
+        finishManualGeneration('success', 'New paths are ready under the latest reply.')
     }
     else if (payload.type === 'choices_skipped') {
       const messageId = String(payload.messageId || '')
       if (messageId) removeCard(messageId)
       if (matchesManualTarget(payload.chatId, payload.messageId)) {
         finishManualGeneration('error', payload.reason === 'ooc'
-          ? 'Skipped: the latest assistant reply is part of an OOC exchange.'
+          ? 'Skipped: the latest reply is part of an OOC exchange.'
           : 'Persona Paths skipped this reply.')
       }
     }
@@ -1968,8 +2017,8 @@ export function setup(ctx: Ctx) {
       }
     }
     else if (payload.type === 'memory_cleared') {
-      clearMemory.textContent = 'Memory cleared ✓'
-      setTimeout(() => { clearMemory.textContent = 'Clear private relationship memory' }, 1200)
+      clearMemory.textContent = 'Cleared'
+      setTimeout(() => { clearMemory.textContent = 'Clear these notes' }, 1200)
     }
   })
 
