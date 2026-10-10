@@ -1281,6 +1281,14 @@ export function setup(ctx: Ctx) {
 
   const settings = ctx.dom.createElement('div', { class: 'pp-settings' }) as HTMLElement
   tab.root.appendChild(settings)
+  // Lumiverse only mounts its own components (the searchable pickers below)
+  // into elements that already sit inside the tab. These two containers are
+  // attached up front so each picker has a home before it is mounted, and
+  // nothing holding a picker is moved afterwards.
+  const modelsPanel = ctx.dom.createElement('section', { class: 'pp-panel', role: 'tabpanel' }) as HTMLElement
+  const writerSection = ctx.dom.createElement('div', { class: 'pp-panel' }) as HTMLElement
+  modelsPanel.appendChild(writerSection)
+  settings.appendChild(modelsPanel)
 
   const heading = ctx.dom.createElement('h3') as HTMLElement
   heading.textContent = 'Persona Paths'
@@ -1435,6 +1443,7 @@ export function setup(ctx: Ctx) {
 
   const connectionSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' }) as HTMLElement
   const connectionField = createLabeledField(ctx, 'Connection', connectionSlot, 'The AI connection that writes your paths. It can be different from your story model.')
+  modelsPanel.insertBefore(connectionField, writerSection)
   const connectionPicker = ctx.components.mountSelect(connectionSlot, {
     value: '',
     options: [],
@@ -1461,6 +1470,7 @@ export function setup(ctx: Ctx) {
 
   const modelSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' }) as HTMLElement
   const modelField = createLabeledField(ctx, 'Model', modelSlot, 'Search the OpenRouter list, or keep the connection’s own model.')
+  modelsPanel.insertBefore(modelField, writerSection)
   const modelPicker = ctx.components.mountSelect(modelSlot, {
     value: CONNECTION_MODEL,
     options: [],
@@ -1502,6 +1512,7 @@ export function setup(ctx: Ctx) {
 
   const writerConnectionSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' }) as HTMLElement
   const writerConnectionField = createLabeledField(ctx, 'Connection', writerConnectionSlot, 'Same as paths, unless you pick another.')
+  writerSection.appendChild(writerConnectionField)
   const writerConnectionPicker = ctx.components.mountSelect(writerConnectionSlot, {
     value: '__same_as_paths__',
     options: [],
@@ -1519,6 +1530,7 @@ export function setup(ctx: Ctx) {
 
   const writerModelSlot = ctx.dom.createElement('div', { class: 'pp-native-select-slot' }) as HTMLElement
   const writerModelField = createLabeledField(ctx, 'Model', writerModelSlot)
+  writerSection.appendChild(writerModelField)
   const writerModelPicker = ctx.components.mountSelect(writerModelSlot, {
     value: CONNECTION_MODEL,
     options: [],
@@ -1788,12 +1800,17 @@ export function setup(ctx: Ctx) {
   const actionRow = ctx.dom.createElement('div', { class: 'pp-row' }) as HTMLElement
   actionRow.append(manualRun, writeRun)
   nowCard.append(personaField, personaBadge, actionRow, manualStatus, enabledLabel)
-  const writerSection = ctx.dom.createElement('div', { class: 'pp-panel' }) as HTMLElement
-  writerSection.append(writerHeading, writerIntro, writerConnectionField, writerConnectionStatus, writerModelField, writerModelCatalogStatus, writerModelOverrideWrap, writerTuningGrid, writerReasoningLabel)
+  // Fill in around the pickers, which are already in place.
+  connectionField.before(h4('Paths'))
+  connectionField.after(connectionStatus, refreshConnections)
+  modelField.after(modelTools, modelOverrideWrap, advancedGrid, reasoningLabel, reasoningHint, ctx.dom.createElement('div', { class: 'pp-divider' }) as HTMLElement)
+  writerConnectionField.before(writerHeading, writerIntro)
+  writerConnectionField.after(writerConnectionStatus)
+  writerModelField.after(writerModelCatalogStatus, writerModelOverrideWrap, writerTuningGrid, writerReasoningLabel)
   const views = [
     { id: 'persona', label: 'Persona', el: panel(personaGuidanceField, globalGuidanceField) },
     { id: 'paths', label: 'Paths', el: panel(grid, behaviorGrid, skipOocLabel, skipOocHint, writerDivider, prismHeading, prismGrid, prismStatus) },
-    { id: 'models', label: 'Models', el: panel(h4('Paths'), connectionField, connectionStatus, refreshConnections, modelField, modelTools, modelOverrideWrap, advancedGrid, reasoningLabel, reasoningHint, ctx.dom.createElement('div', { class: 'pp-divider' }) as HTMLElement, writerSection) },
+    { id: 'models', label: 'Models', el: modelsPanel },
     { id: 'memory', label: 'Memory', el: panel(grid2, longTermStoryMemoryLabel, longTermStoryMemoryHint, cortexCountField, cortexStatus, relationshipLabel, relationshipHint, clearMemory) },
   ]
   const tabBar = ctx.dom.createElement('div', { class: 'pp-tabs', role: 'tablist', 'aria-label': 'Persona Paths settings' }) as HTMLElement
@@ -1819,7 +1836,8 @@ export function setup(ctx: Ctx) {
     })
     tabBar.appendChild(button)
   })
-  settings.append(titleRow, intro, nowCard, tabBar, ...views.map(view => view.el))
+  modelsPanel.before(titleRow, intro, nowCard, tabBar, views[0].el, views[1].el)
+  modelsPanel.after(views[3].el)
   showView('persona')
 
   function applyState(state: any) {

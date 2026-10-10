@@ -1191,6 +1191,10 @@ function setup(ctx) {
   let unsubPolishAction = () => {};
   const settings = ctx.dom.createElement("div", { class: "pp-settings" });
   tab.root.appendChild(settings);
+  const modelsPanel = ctx.dom.createElement("section", { class: "pp-panel", role: "tabpanel" });
+  const writerSection = ctx.dom.createElement("div", { class: "pp-panel" });
+  modelsPanel.appendChild(writerSection);
+  settings.appendChild(modelsPanel);
   const heading = ctx.dom.createElement("h3");
   heading.textContent = "Persona Paths";
   const version = ctx.dom.createElement("div", { class: "pp-version" });
@@ -1335,6 +1339,7 @@ function setup(ctx) {
   }
   const connectionSlot = ctx.dom.createElement("div", { class: "pp-native-select-slot" });
   const connectionField = createLabeledField(ctx, "Connection", connectionSlot, "The AI connection that writes your paths. It can be different from your story model.");
+  modelsPanel.insertBefore(connectionField, writerSection);
   const connectionPicker = ctx.components.mountSelect(connectionSlot, {
     value: "",
     options: [],
@@ -1359,6 +1364,7 @@ function setup(ctx) {
   refreshConnections.classList.add("pp-quiet");
   const modelSlot = ctx.dom.createElement("div", { class: "pp-native-select-slot" });
   const modelField = createLabeledField(ctx, "Model", modelSlot, "Search the OpenRouter list, or keep the connection’s own model.");
+  modelsPanel.insertBefore(modelField, writerSection);
   const modelPicker = ctx.components.mountSelect(modelSlot, {
     value: CONNECTION_MODEL,
     options: [],
@@ -1399,6 +1405,7 @@ function setup(ctx) {
   writerIntro.textContent = "Writes or polishes your next message. It works even when paths are off or fail.";
   const writerConnectionSlot = ctx.dom.createElement("div", { class: "pp-native-select-slot" });
   const writerConnectionField = createLabeledField(ctx, "Connection", writerConnectionSlot, "Same as paths, unless you pick another.");
+  writerSection.appendChild(writerConnectionField);
   const writerConnectionPicker = ctx.components.mountSelect(writerConnectionSlot, {
     value: "__same_as_paths__",
     options: [],
@@ -1415,6 +1422,7 @@ function setup(ctx) {
   writerConnectionStatus.textContent = "Using the paths connection.";
   const writerModelSlot = ctx.dom.createElement("div", { class: "pp-native-select-slot" });
   const writerModelField = createLabeledField(ctx, "Model", writerModelSlot);
+  writerSection.appendChild(writerModelField);
   const writerModelPicker = ctx.components.mountSelect(writerModelSlot, {
     value: CONNECTION_MODEL,
     options: [],
@@ -1668,12 +1676,16 @@ function setup(ctx) {
   const actionRow = ctx.dom.createElement("div", { class: "pp-row" });
   actionRow.append(manualRun, writeRun);
   nowCard.append(personaField, personaBadge, actionRow, manualStatus, enabledLabel);
-  const writerSection = ctx.dom.createElement("div", { class: "pp-panel" });
-  writerSection.append(writerHeading, writerIntro, writerConnectionField, writerConnectionStatus, writerModelField, writerModelCatalogStatus, writerModelOverrideWrap, writerTuningGrid, writerReasoningLabel);
+  connectionField.before(h4("Paths"));
+  connectionField.after(connectionStatus, refreshConnections);
+  modelField.after(modelTools, modelOverrideWrap, advancedGrid, reasoningLabel, reasoningHint, ctx.dom.createElement("div", { class: "pp-divider" }));
+  writerConnectionField.before(writerHeading, writerIntro);
+  writerConnectionField.after(writerConnectionStatus);
+  writerModelField.after(writerModelCatalogStatus, writerModelOverrideWrap, writerTuningGrid, writerReasoningLabel);
   const views = [
     { id: "persona", label: "Persona", el: panel(personaGuidanceField, globalGuidanceField) },
     { id: "paths", label: "Paths", el: panel(grid, behaviorGrid, skipOocLabel, skipOocHint, writerDivider, prismHeading, prismGrid, prismStatus) },
-    { id: "models", label: "Models", el: panel(h4("Paths"), connectionField, connectionStatus, refreshConnections, modelField, modelTools, modelOverrideWrap, advancedGrid, reasoningLabel, reasoningHint, ctx.dom.createElement("div", { class: "pp-divider" }), writerSection) },
+    { id: "models", label: "Models", el: modelsPanel },
     { id: "memory", label: "Memory", el: panel(grid2, longTermStoryMemoryLabel, longTermStoryMemoryHint, cortexCountField, cortexStatus, relationshipLabel, relationshipHint, clearMemory) }
   ];
   const tabBar = ctx.dom.createElement("div", { class: "pp-tabs", role: "tablist", "aria-label": "Persona Paths settings" });
@@ -1701,7 +1713,8 @@ function setup(ctx) {
     });
     tabBar.appendChild(button);
   });
-  settings.append(titleRow, intro, nowCard, tabBar, ...views.map((view) => view.el));
+  modelsPanel.before(titleRow, intro, nowCard, tabBar, views[0].el, views[1].el);
+  modelsPanel.after(views[3].el);
   showView("persona");
   function applyState(state) {
     currentState = state;
