@@ -1,12 +1,12 @@
 {
   "name": "persona-paths",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "bun build backend.ts --outfile backend.js --target bun && bun build frontend.ts --outfile frontend.js --target browser",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/persona-selection.mjs && node tests/model-picker.mjs"
+    "test": "node tests/moves.mjs"
   },
   "devDependencies": {
     "lumiverse-spindle-types": "latest",

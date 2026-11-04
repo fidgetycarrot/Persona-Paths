@@ -1,5 +1,16 @@
 # Persona Paths
 
+## v0.1.36 — six kinds of move, stakes, and a new look
+
+- **Every path is a different kind of move.** Each path is one of six: **Go deeper**, **Push back**, **Pull back**, **Change things**, **Wild card** or **Watch and wait**. No two paths in a set can share a move, so you stop getting four versions of the same idea. This is checked in code, not just asked for: if two paths match, the set is sent back and redone.
+- **Change things** and **Wild card** are always included. Change things replaces the old "Moves the scene on" path. Wild card is the boldest thing your persona could still believably do.
+- With 3 paths you get Change things, Wild card and the best fit for the scene. With 6 you get all of them. Paths always show in the same order, so each kind of move sits in the same spot every time.
+- **What's happening line.** One sentence under the place and moment saying who or what is pressing on you right now.
+- **Stakes line.** Each path shows a short note on what it could cost or change, so you can choose without opening it.
+- **New card look.** A dark, starry card with a colour and icon for each kind of move, inspired by KittyLotus's CYOA cards (icons are original). On phones, the hidden text is cut to two lines until you tap.
+- Older saved paths still show, just without move icons or stakes.
+- If your preset makes its own choices (for example KittyLotus with Next-Action Choices on), turn one of them off so you don't get two sets after every reply.
+
 ## Interface refresh (unreleased, on top of v0.1.35)
 
 - The panel now opens on what you use every day: who you are playing, **Get paths for the latest reply**, **Write for me**, and the **Make paths after every reply** switch. Everything else is sorted into four tabs: **Persona**, **Paths**, **Models** and **Memory**.
@@ -86,7 +97,7 @@ Optimizes Persona Paths for Lumiverse's current virtualized message list. Older 
 
 v0.1.26 keeps **at most one Path widget active: the latest actionable assistant reply**. Historical choices remain saved privately but are no longer mounted while scrolling. Message remounts do no backend work, identical widget payloads are render-deduplicated, chat restore loads only the latest cached Path, and starting a new story generation retires the previous widget immediately. All v0.1.25 features — Current Moment anchoring, Memory Cortex, Draft Polish, Prism, guided regeneration, combining Paths, etc. — remain intact.
 
-Version 0.1.35
+Version 0.1.36
 
 Persona Paths is a Lumiverse/Spindle extension that creates private, persona-aware next-move choices after character/assistant role-play replies.
 

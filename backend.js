@@ -1,5 +1,28 @@
 // @bun
 // backend.ts
+var MOVES = [
+  { id: "deeper", label: "Go deeper", meaning: "lean further into what is already happening: keep talking, ask, open up, press the point, get closer" },
+  { id: "pushback", label: "Push back", meaning: "resist: get angry, refuse, argue, challenge, set a limit, say no" },
+  { id: "pullback", label: "Pull back", meaning: "step away emotionally or socially: deflect, go quiet, joke it off, withdraw, change the subject" },
+  { id: "change", label: "Change things", meaning: "move the story on: leave, act, start a task, go somewhere, put a plan in motion, create a new situation" },
+  { id: "wildcard", label: "Wild card", meaning: "the bold, risky or surprising move this persona could still plausibly make on impulse; volatile and hard to walk back" },
+  { id: "wait", label: "Watch and wait", meaning: "hold back on purpose: observe, listen, stay still, let the other side make the next move" }
+];
+var MOVE_IDS = new Set(MOVES.map((m) => m.id));
+var REQUIRED_MOVES = ["change", "wildcard"];
+function normalizeMove(value) {
+  const raw = String(value || "").trim().toLowerCase().replace(/[^a-z]/g, "");
+  if (MOVE_IDS.has(raw))
+    return raw;
+  const byLabel = MOVES.find((m) => m.label.toLowerCase().replace(/[^a-z]/g, "") === raw);
+  if (byLabel)
+    return byLabel.id;
+  if (raw === "watch" || raw === "watchwait")
+    return "wait";
+  if (raw === "wild")
+    return "wildcard";
+  return;
+}
 var CONFIG_PATH = "config.json";
 var CACHE_PATH = "choices.json";
 var MEMORY_PATH = "relationship_memory.json";
@@ -412,11 +435,16 @@ function validateResult(result, expectedCount, detail) {
     issues.push("scene_state.location is too long");
   if (moment && moment.split(/\s+/).filter(Boolean).length > 10)
     issues.push("scene_state.moment is too long");
+  const pressure = String(state?.pressure || "").trim();
+  if (!pressure)
+    issues.push("scene_state.pressure is missing");
+  else if (pressure.split(/\s+/).filter(Boolean).length > 26)
+    issues.push("scene_state.pressure is too long; keep it to one short sentence");
   const choices = Array.isArray(result?.choices) ? result.choices : [];
   if (choices.length !== expectedCount)
     issues.push(`expected exactly ${expectedCount} choices`);
   const intents = new Set;
-  let sceneAdvancers = 0;
+  const moves = new Set;
   const minLength = detail === "compact" ? 55 : detail === "detailed" ? 180 : 100;
   for (let i = 0;i < choices.length; i += 1) {
     const c = choices[i] || {};
@@ -440,11 +468,23 @@ function validateResult(result, expectedCount, detail) {
       issues.push(`choice ${i + 1} repeats another intent`);
     if (intent)
       intents.add(intent);
-    if (c.advances_scene === true)
-      sceneAdvancers += 1;
+    const move = normalizeMove(c.move);
+    if (!move)
+      issues.push(`choice ${i + 1} has no valid move; use one of ${MOVES.map((m) => m.id).join(", ")}`);
+    else if (moves.has(move))
+      issues.push(`choice ${i + 1} repeats the move "${move}"; every choice must use a different move`);
+    else
+      moves.add(move);
+    const stakes = String(c.stakes || "").trim();
+    if (!stakes)
+      issues.push(`choice ${i + 1} has no stakes line`);
+    else if (stakes.split(/\s+/).filter(Boolean).length > 18)
+      issues.push(`choice ${i + 1} stakes line is too long; keep it under 15 words`);
   }
-  if (sceneAdvancers !== 1)
-    issues.push(`expected exactly one scene-advancing choice, got ${sceneAdvancers}`);
+  for (const required of REQUIRED_MOVES) {
+    if (choices.length && !moves.has(required))
+      issues.push(`no choice uses the required move "${required}"`);
+  }
   return issues;
 }
 function detailInstruction(detail) {
@@ -757,17 +797,27 @@ CHOICE QUALITY RULES
 - These are meaningful courses of action, not four alternate quips.
 - Every choice must contain a concrete non-dialogue action, physical decision, deliberate stillness, change of objective, or other story-moving behavior. Dialogue is optional and should support the choice rather than BE the entire choice.
 - Consider movement, leaving the scene, travel, investigation, preparation, physical interaction, escalation, retreat, concealment, waiting, observation, helping, refusing, changing objectives, interacting with the environment, or intentionally doing nothing when those are plausible.
-- The choices must differ in TRAJECTORY, not merely wording, tone, or punchline.
+- The choices must differ in TRAJECTORY, not merely wording, tone, or punchline. The MOVES section below enforces this.
 - Each choice title is a SCAN LABEL, not a miniature summary of the first action. Make it 2\u20134 words whenever possible and describe the option's emotional/strategic direction, intent, or likely immediate trajectory at a glance. Include emotional stance when it materially distinguishes the option (for example: "Angry pushback", "Protective regroup", "Playful deflection", "Quiet withdrawal", "Commit to leaving", "Investigate carefully").
 - Do NOT use generic action-only titles such as "Move to the couch", "Ask a question", "Raid the fridge", or "Talk to Sovi" when a more informative intent label is possible. The player should be able to skip obviously wrong emotional directions by reading titles alone.
 - For every choice, return an integer "intensity" from 1 to 3 describing the option's immediate commitment/volatility, NOT morality and NOT chance of success: 1 = quiet/low-impact/easy to reverse, 2 = decisive/meaningful commitment, 3 = volatile/high-impact/hard to walk back. Do not force an even spread; rate what the option actually does.
-- EXACTLY ONE choice must be the SCENE ADVANCER. Mark only that choice with "advances_scene": true; all other choices must use false.
-- The Scene Advancer must commit the persona to a meaningful next beat that materially changes the situation instead of merely continuing the current conversational/emotional loop. Examples include leaving or entering a place, beginning travel, starting or abandoning a task, initiating an investigation, making a decisive physical move, acting on a plan, changing the immediate objective, or otherwise creating a new state for the story model to respond to.
-- "Advance the scene" does NOT mean "be reckless", "escalate", or "invent a twist". It must remain plausible for this persona and moment, and it must still obey the authorship boundary below. A quiet departure, going to sleep, beginning preparations, or setting off down a trail can advance the scene when appropriate.
-- The Scene Advancer may initiate an action but must not decide its external result. Example: GOOD: "I shoulder my pack and start down the trail." BAD: "I shoulder my pack, reach town by dawn, and find the missing merchant."
-- The remaining choices should stay organic and persona-faithful; do not force them into fixed categories. If the scene strongly favors several similar emotional responses, keep them plausible while making their actual objectives/actions meaningfully different.
+- The "change" choice must commit the persona to a meaningful next beat that materially changes the situation instead of merely continuing the current conversational/emotional loop: leaving or entering a place, beginning travel, starting or abandoning a task, initiating an investigation, making a decisive physical move, acting on a plan, or changing the immediate objective. It does NOT mean reckless or a twist; a quiet departure, going to sleep, or setting off down a trail can qualify. It may start an action but must not decide its result. GOOD: "I shoulder my pack and start down the trail." BAD: "I shoulder my pack, reach town by dawn, and find the missing merchant."
 - The player is allowed to walk away, end a conversation, leave town, pack up, set off down the trail, ignore a hook, or choose a direction the assistant did not explicitly invite.
 - ${detailInstruction(cfg.detail)}
+
+MOVES \u2014 EACH CHOICE IS A DIFFERENT KIND OF MOVE
+Every choice gets a "move" from this fixed list, and NO TWO CHOICES MAY SHARE A MOVE:
+${MOVES.map((m) => `- "${m.id}" (${m.label}): ${m.meaning}.`).join(`
+`)}
+- "change" and "wildcard" MUST always be included. Fill the remaining ${Math.max(0, cfg.choiceCount - REQUIRED_MOVES.length)} slot(s) with the other moves that fit this scene best.${cfg.choiceCount >= MOVES.length ? " With six choices, use all six moves exactly once." : ""}
+- The move decides WHAT KIND of thing the persona does. The persona decides HOW they do it. A shy persona's "pushback" might be a flat, quiet "no"; a hothead's "pullback" might be storming off to cool down. Stay in character inside every move.
+- Do not fake a move. A "pushback" that is really agreement, or a "wait" that is really a long speech, breaks the rule. If a move feels unnatural for this persona, find the most plausible version of it rather than a hollow one.
+- "wildcard" is the boldest option on the card: the risky, surprising, or volatile thing this persona could still believably do on impulse. Not random, not out of character, not an invented twist in the world. It is usually intensity 3.
+- The title must not just repeat the move name. "Push back" is the move; the title says how, e.g. "Cold refusal" or "Call his bluff".
+
+STAKES
+- Every choice has a "stakes" line: 4\u201312 plain words on what this choice puts on the line or might change, written as a possibility, never a result. Examples: "Could cost her trust", "Shows your hand early", "Buys time, but he notices", "No way back to the party".
+- Stakes may name what is at risk or what might shift. They must not narrate other characters' reactions or decide outcomes.
 
 AUTHORSHIP BOUNDARY
 - Control ONLY the player's persona: their actions, speech, thoughts, intentions, posture, preparation, and immediately available choices.
@@ -790,9 +840,10 @@ STYLE
 - The choice text must be ready to paste directly into the user's composer. Do not put labels or explanations inside the pasted text.
 
 CURRENT-STATE METADATA
-- Return a tiny scene_state object describing where the PLAYER PERSONA physically is at the END of the latest assistant reply and the immediate beat they are in.
+- Return a tiny scene_state object describing where the PLAYER PERSONA physically is at the END of the latest assistant reply, the immediate beat they are in, and what is pressing on them.
 - scene_state.location should be a 2\u20136 word physical anchor such as "Living room couch", "Passenger seat", "Forest trail", or "Kitchen doorway". It must reflect the FINAL state, not an earlier location from the same reply.
 - scene_state.moment should be a 2\u20138 word immediate beat/status such as "Pinned in the chair", "Hannah awaiting an answer", "Microwave running", or "Argument just broke". Keep it observable/grounded and do not invent an outcome.
+- scene_state.pressure is ONE short sentence (8\u201320 words) naming who or what is pressing on the persona right now and how, e.g. "Mara is blocking the door and wants an answer before anyone leaves." or "The storm is closing in and the shelter is still a mile off." Describe the pressure as it stands; do not invent a new development.
 - This metadata is for the human's UI sanity check. If you cannot reconcile it with CURRENT MOMENT, trust CURRENT MOMENT.
 
 PRIVATE RELATIONSHIP NOTES
@@ -804,12 +855,12 @@ OUTPUT
 Return JSON only, with this exact shape:
 {
   "style": { "pov": "first|second|third", "tense": "present|past" },
-  "scene_state": { "location": "Living room couch", "moment": "Hannah awaiting an answer" },
+  "scene_state": { "location": "Living room couch", "moment": "Hannah awaiting an answer", "pressure": "Hannah has asked straight out whether you lied to her, and she is waiting." },
   "relationship_updates": [
     { "subject": "Elena", "notes": ["unusually patient", "protective", "still blunt and teasing"] }
   ],
   "choices": [
-    { "intent": "short unique trajectory", "title": "2\u20134 word emotional/strategic scan label", "text": "paste-ready user turn", "intensity": 2, "advances_scene": false }
+    { "move": "pushback", "intent": "short unique trajectory", "title": "2\u20134 word emotional/strategic scan label", "stakes": "4\u201312 word possible cost or change", "text": "paste-ready user turn", "intensity": 2 }
   ]
 }
 No markdown. No commentary.`;
@@ -837,7 +888,7 @@ ${body}`;
   const latestAssistant = [...sceneMessages].reverse().find((m) => m?.role === "assistant");
   const currentMoment = latestAssistant ? compactTailText(cleanRoleplayText(latestAssistant.content), 5200) : "(No assistant reply was available.)";
   const guidance = String(regenerationGuidance || "").trim();
-  const rejectedBlock = rejectedChoices.length ? rejectedChoices.slice(0, 8).map((choice, i) => `PATH #${i + 1} \u2014 ${choice.title || choice.intent || "Untitled"}:
+  const rejectedBlock = rejectedChoices.length ? rejectedChoices.slice(0, 8).map((choice, i) => `PATH #${i + 1} \u2014 ${choice.title || choice.intent || "Untitled"}${choice.move ? ` [${choice.move}]` : ""}:
 ${compactText(cleanRoleplayText(choice.text), 1800)}`).join(`
 
 `) : "(none)";
@@ -1001,7 +1052,7 @@ async function generatePaths(args, userId) {
       ...choice,
       text: cleanGeneratedChoiceText(choice?.text),
       intensity: Number(choice?.intensity),
-      advances_scene: choice?.advances_scene === true
+      move: normalizeMove(choice?.move)
     }));
   }
   let issues = validateResult(parsed, config.choiceCount, config.detail);
@@ -1043,7 +1094,7 @@ Generate the answer again from scratch. Return one corrected JSON object only. P
       parsed.choices = parsed.choices.map((choice) => ({
         ...choice,
         text: cleanGeneratedChoiceText(choice?.text),
-        advances_scene: choice?.advances_scene === true
+        move: normalizeMove(choice?.move)
       }));
     }
     issues = validateResult(parsed, config.choiceCount, config.detail);
@@ -1055,11 +1106,16 @@ Generate the answer again from scratch. Return one corrected JSON object only. P
     title: String(choice.title || "").trim(),
     text: cleanGeneratedChoiceText(choice.text),
     intensity: Math.max(1, Math.min(3, Math.round(Number(choice?.intensity) || 2))),
-    advances_scene: choice?.advances_scene === true
+    move: normalizeMove(choice?.move),
+    stakes: cleanGeneratedChoiceText(choice?.stakes).replace(/\s+/g, " ").trim(),
+    advances_scene: normalizeMove(choice?.move) === "change"
   }));
+  const moveOrder = MOVES.map((m) => m.id);
+  parsed.choices.sort((a, b) => moveOrder.indexOf(a.move) - moveOrder.indexOf(b.move));
   parsed.scene_state = {
     location: String(parsed.scene_state?.location || "").trim(),
-    moment: String(parsed.scene_state?.moment || "").trim()
+    moment: String(parsed.scene_state?.moment || "").trim(),
+    pressure: String(parsed.scene_state?.pressure || "").trim()
   };
   parsed.relationship_updates = Array.isArray(parsed.relationship_updates) ? parsed.relationship_updates.map((item) => ({
     subject: String(item?.subject || "").trim(),
@@ -1335,7 +1391,8 @@ ${cleanGuidance}` : cleanGuidance;
       style: result.style,
       sceneState: {
         location: String(result.scene_state?.location || "").trim(),
-        moment: String(result.scene_state?.moment || "").trim()
+        moment: String(result.scene_state?.moment || "").trim(),
+        pressure: String(result.scene_state?.pressure || "").trim()
       },
       choices: result.choices,
       prismColor: prismInfo.color || undefined,
