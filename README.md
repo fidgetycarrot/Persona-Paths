@@ -7,7 +7,8 @@
 - With 3 paths you get Change things, Wild card and the best fit for the scene. With 6 you get all of them. Paths always show in the same order, so each kind of move sits in the same spot every time.
 - **What's happening line.** One sentence under the place and moment saying who or what is pressing on you right now.
 - **Stakes line.** Each path shows a short note on what it could cost or change, so you can choose without opening it.
-- **New card look.** A dark, starry card with a colour and icon for each kind of move, inspired by KittyLotus's CYOA cards (icons are original). On phones, the hidden text is cut to two lines until you tap.
+- **New card look.** A dark, starry card with a colour and icon for each kind of move, inspired by KittyLotus's CYOA cards (icons are original). 
+- **Compact on phones.** On touch screens each path shows only its icon, title and stakes until you tap it. Tapping another path closes the one before, so the card stays short.
 - Older saved paths still show, just without move icons or stakes.
 - If your preset makes its own choices (for example KittyLotus with Next-Action Choices on), turn one of them off so you don't get two sets after every reply.
 

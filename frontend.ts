@@ -830,6 +830,7 @@ export function setup(ctx: Ctx) {
     border:1px solid rgba(255,255,255,.05); border-radius:14px; color:var(--ink); font:inherit;
     background:linear-gradient(90deg, rgba(255,255,255,.025), rgba(255,255,255,.006));
     transition:border-color .22s ease, transform .2s ease;
+    -webkit-tap-highlight-color:transparent;
   }
   .choice::before { content:""; position:absolute; left:12px; right:12px; bottom:-4px; height:1px; background:linear-gradient(90deg, var(--accent), rgba(255,255,255,.06) 65%, transparent); opacity:.45; pointer-events:none; }
   .choice::after { content:""; position:absolute; inset:0; border-radius:14px; z-index:-1; background:radial-gradient(60% 130% at 0% 50%, var(--accent), transparent 70%); opacity:0; transition:opacity .24s ease; }
@@ -867,8 +868,10 @@ export function setup(ctx: Ctx) {
     font-size:13.5px; line-height:1.55; color:var(--dim); white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word;
     filter:blur(4px); opacity:.4; user-select:none; pointer-events:none; transition:filter .15s ease, opacity .15s ease;
   }
-  body.touch .text { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  body.touch .choice.revealed .text { display:block; overflow:visible; }
+  body.touch .choice:not(.revealed) { border-color:rgba(255,255,255,.05); transform:none; }
+  body.touch .choice:not(.revealed)::after { opacity:0; }
+  body.touch .text { display:none; }
+  body.touch .choice.revealed .text { display:block; }
   .choice:hover .text, .choice:focus-visible .text, .choice.revealed .text { filter:none; opacity:1; user-select:text; color:#e9e6f0; }
   .footer-hint { margin:12px 2px 0; font:italic 12px/1.3 var(--serif); color:var(--faint); text-align:center; letter-spacing:.02em; }
   .loading { display:flex; align-items:center; gap:10px; color:var(--dim); font:italic 14px/1.3 var(--serif); padding:8px 2px; }
@@ -1062,6 +1065,7 @@ export function setup(ctx: Ctx) {
       button.append(icon, copy, heat, body);
       button.addEventListener('click', () => {
         if (!canHover && !button.classList.contains('revealed')) {
+          host.querySelectorAll('.choice.revealed').forEach((el) => el.classList.remove('revealed'));
           button.classList.add('revealed');
           resize();
           showToast('Tap again to add');
