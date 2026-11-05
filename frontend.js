@@ -785,10 +785,6 @@ function setup(ctx) {
   .icon svg { width:25px; height:25px; }
   .icon::after { content:""; position:absolute; inset:-5px; border-radius:50%; border:1px dashed color-mix(in srgb, var(--accent) 38%, transparent); transition:transform .5s ease; }
   .choice:hover .icon::after { transform:rotate(60deg); }
-  .choice[data-move="wildcard"] .icon::after { animation:spin 16s linear infinite; }
-  .choice[data-move="wildcard"] .icon svg { animation:glow 2.4s ease-in-out infinite; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-  @keyframes glow { 0%,100% { opacity:.8; transform:scale(.96); } 50% { opacity:1; transform:scale(1.06); } }
   .copy { min-width:0; display:grid; gap:5px; }
   .tag { display:flex; align-items:center; gap:7px; color:var(--accent); font:800 9.5px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing:.24em; text-transform:uppercase; min-width:0; }
   .tag .n { color:rgba(243,212,138,.75); font:italic 600 11px/1 var(--serif); letter-spacing:.08em; }
@@ -838,7 +834,7 @@ function setup(ctx) {
   .hint { margin-top:8px; font-size:12px; line-height:1.4; color:var(--faint); }
   em { font-style:italic; }
   @media (prefers-reduced-motion: reduce) {
-    .dot, .choice[data-move="wildcard"] .icon::after, .choice[data-move="wildcard"] .icon svg { animation:none; }
+    .dot { animation:none; }
     .text, .choice, .icon::after { transition:none; }
   }
   @media (max-width:480px) {
