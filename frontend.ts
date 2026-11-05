@@ -729,6 +729,20 @@ export function setup(ctx: Ctx) {
     activePathMessageId = messageId
   }
 
+  // Lets a manual run tell "paths were made but the card never showed" apart
+  // from success. The card posts { type: 'shown' } once its script has run.
+  let lastWidgetError = ''
+  const shownWatchers = new Map<string, ReturnType<typeof setTimeout>>()
+  function watchCardShown(messageId: string, onMissing: () => void) {
+    const prev = shownWatchers.get(messageId)
+    if (prev) clearTimeout(prev)
+    shownWatchers.set(messageId, setTimeout(() => { shownWatchers.delete(messageId); onMissing() }, 8000))
+  }
+  function markCardShown(messageId: string) {
+    const timer = shownWatchers.get(messageId)
+    if (timer) { clearTimeout(timer); shownWatchers.delete(messageId) }
+  }
+
   function renderMessageWidget(messageId: string, chatId: string, model: any) {
     activateMessage(messageId)
 
@@ -1096,6 +1110,7 @@ export function setup(ctx: Ctx) {
     post({ type:'guidance', guidance, saveAsPersonaGuidance: !!document.getElementById('saveGuidance').checked });
   });
   resize();
+  if (model.mode === 'choices') post({ type:'shown' });
 })();
 </script>
 </body>
@@ -1107,6 +1122,7 @@ export function setup(ctx: Ctx) {
         async (event: any) => {
           if (!event || typeof event !== 'object') return
           const type = String(event.type || '')
+          if (type === 'shown') { markCardShown(messageId); return }
           if (type === 'choice') {
             const data = dataByMessage.get(messageId)
             const index = Number(event.index)
@@ -1150,8 +1166,9 @@ export function setup(ctx: Ctx) {
       cards.set(messageId, cleanup)
       widgetSignatures.set(messageId, signature)
       return true
-    } catch (err) {
+    } catch (err: any) {
       console.error('[Persona Paths] Message widget render failed', err)
+      lastWidgetError = String(err?.message || err || 'unknown error')
       return false
     }
   }
@@ -1177,7 +1194,7 @@ export function setup(ctx: Ctx) {
 
   function renderChoices(data: CachedPath) {
     dataByMessage.set(data.messageId, data)
-    renderMessageWidget(data.messageId, data.chatId, {
+    return renderMessageWidget(data.messageId, data.chatId, {
       mode: 'choices',
       styleText: titleCaseStyle(data.style),
       sceneState: data.sceneState,
@@ -2075,9 +2092,23 @@ export function setup(ctx: Ctx) {
       if (matchesManualTarget(payload.chatId, payload.messageId)) manualRun.textContent = 'Making paths…'
     }
     else if (payload.type === 'choices_ready' && payload.data) {
-      renderChoices(payload.data)
-      if (matchesManualTarget(payload.data.chatId, payload.data.messageId))
-        finishManualGeneration('success', 'New paths are ready under the latest reply.')
+      const manual = matchesManualTarget(payload.data.chatId, payload.data.messageId)
+      const readyMessageId = String(payload.data.messageId)
+      lastWidgetError = ''
+      if (!renderChoices(payload.data)) {
+        const why = `Paths were made but Lumiverse would not show the card${lastWidgetError ? ` (${lastWidgetError})` : ''}. Try closing and reopening Lumiverse.`
+        if (manual) finishManualGeneration('error', why)
+        else setLauncherStatus('error', why)
+      } else {
+        if (manual) finishManualGeneration('success', 'New paths are ready under the latest reply.')
+        if (manual) watchCardShown(readyMessageId, () => {
+          if (activePathMessageId !== readyMessageId) return
+          const why = 'Paths were made, but the card did not appear under the reply. Try closing and reopening Lumiverse.'
+          manualStatus.classList.add('error')
+          manualStatus.textContent = why
+          setLauncherStatus('error', why)
+        })
+      }
     }
     else if (payload.type === 'choices_skipped') {
       const messageId = String(payload.messageId || '')
